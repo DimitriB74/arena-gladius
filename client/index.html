@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arena Gladius</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@600;800&family=Alegreya+Sans:wght@400;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/combat.css">
+</head>
+<body>
+  <!-- Scène dessinée sur canvas (village, boutiques, arènes...) -->
+  <canvas id="scene"></canvas>
+
+  <!-- ===== Barre du haut ===== -->
+  <header id="hud" hidden>
+    <button class="btn-hud" id="hud-maison" title="Retour au village">🏠 <span>Village</span></button>
+    <div class="hud-identite">
+      <canvas id="hud-portrait"></canvas>
+      <div><strong id="hud-nom"></strong><small id="hud-niveau"></small></div>
+    </div>
+    <div class="hud-credits" title="Crédits"><i class="piece"></i><span id="hud-credits">0</span></div>
+    <button class="btn-hud carre bouton-son" id="hud-son" title="Volume de la musique et des bruitages">🔊</button>
+    <button class="btn-hud" id="hud-parametres" title="Paramètres : points de compétence et sauvegarde">
+      ⚙ <span>Paramètres</span><em class="pastille-points" id="hud-points" hidden>0</em>
+    </button>
+  </header>
+
+  <main id="app">
+    <!-- ===== Écran titre ===== -->
+    <section id="ecran-titre" class="ecran">
+      <div class="banniere">
+        <div class="laurier gauche">❦</div>
+        <h1>Arena<br><span>Gladius</span></h1>
+        <div class="laurier droite">❦</div>
+      </div>
+      <p class="devise">« Gloire, sable et sandales »</p>
+      <div class="menu-titre">
+        <button class="btn btn-or" id="btn-nouvelle">⚔ Nouveau gladiateur</button>
+        <button class="btn" id="btn-continuer" disabled>Continuer</button>
+        <button class="btn" id="btn-codex">📜 Codex de l’arène</button>
+      </div>
+      <p class="statut-serveur" id="statut-serveur">Connexion au serveur…</p>
+      <button class="bouton-musique-titre bouton-son" id="titre-son" data-texte="Son" title="Volume de la musique et des bruitages">🔊 Son</button>
+      <p class="phase" id="titre-profil"></p>
+    </section>
+
+    <!-- ===== Codex ===== -->
+    <section id="ecran-codex" class="ecran">
+      <div class="parchemin large">
+        <header class="entete-parchemin">
+          <h2>Codex de l’arène</h2>
+          <button class="btn petit" id="btn-retour-codex">← Retour</button>
+        </header>
+        <nav class="onglets" id="onglets-codex"></nav>
+        <div class="contenu-codex" id="contenu-codex"></div>
+      </div>
+    </section>
+
+    <!-- ===== Création du gladiateur ===== -->
+    <section id="ecran-creation" class="ecran">
+      <div class="parchemin large creation">
+        <header class="entete-parchemin">
+          <h2>Nouveau gladiateur</h2>
+          <button class="btn petit" id="creation-retour">← Retour</button>
+        </header>
+        <div class="creation-grille">
+          <div class="creation-apparence">
+            <canvas id="creation-canvas" class="apercu"></canvas>
+            <div id="choix-skin"></div>
+            <button class="btn petit" id="creation-hasard">🎲 Apparence au hasard</button>
+          </div>
+          <div class="creation-droite">
+            <label class="champ">
+              <span>Nom du gladiateur</span>
+              <input id="creation-nom" type="text" autocomplete="off" placeholder="Ex. : Maximus" spellcheck="false">
+            </label>
+            <p class="erreur" id="creation-erreur-nom"></p>
+            <p class="compteur-points">Points à répartir : <strong id="creation-points">10</strong></p>
+            <div id="creation-attributs" class="liste-attributs"></div>
+            <div class="apercu-stats" id="creation-stats"></div>
+            <div class="rangee-boutons">
+              <button class="btn petit" id="creation-reset">↺ Réinitialiser</button>
+              <button class="btn btn-or" id="creation-valider" disabled>Entrer dans la ville ➜</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Village (la scène est dessinée sur le canvas) ===== -->
+    <section id="ecran-village" class="ecran">
+      <aside id="village-lobby" class="village-lobby parchemin">
+        <h3 id="village-lobby-titre"><span>⚔ Gladiateurs en ligne (<span id="village-nb-joueurs">0</span>)</span> <small>▾</small></h3>
+        <div id="village-joueurs" class="liste-joueurs"></div>
+      </aside>
+      <nav id="village-aide" class="village-aide" aria-label="Lieux du village">
+        <button data-lieu="forgeron">⚒ Forgeron</button>
+        <button data-lieu="colisee">🏛 Colisée</button>
+        <button data-lieu="armurier">🛡 Armurier</button>
+      </nav>
+    </section>
+
+    <!-- ===== Boutique (Forgeron / Armurier) ===== -->
+    <section id="ecran-boutique" class="ecran">
+      <aside class="panneau-boutique parchemin">
+        <header class="entete-boutique">
+          <h2 id="boutique-titre">La Forge</h2>
+          <p id="boutique-sous-titre"></p>
+        </header>
+        <nav class="onglets" id="boutique-onglets" hidden></nav>
+        <div id="boutique-equipe"></div>
+        <h3 class="titre-liste">En vente</h3>
+        <div id="boutique-liste" class="liste-objets"></div>
+      </aside>
+    </section>
+
+    <!-- ===== Colisée : tirage de l'arène ===== -->
+    <section id="ecran-arene" class="ecran">
+      <div class="panneau-arene parchemin" id="panneau-arene">
+        <p class="surtitre">Le sort a désigné…</p>
+        <h2 id="arene-nom">Tirage au sort…</h2>
+        <p id="arene-description"></p>
+        <div class="rangee-boutons">
+          <button class="btn btn-or" id="arene-ia" disabled>🤖 Combattre un bot</button>
+          <button class="btn" id="arene-ami" disabled>👥 Défier un ami</button>
+        </div>
+        <div id="arene-difficultes" class="choix-difficulte" hidden></div>
+        <div id="arene-joueurs" class="liste-joueurs" hidden></div>
+      </div>
+    </section>
+
+    <!-- ===== Paramètres ===== -->
+    <section id="ecran-parametres" class="ecran">
+      <div class="parchemin large parametres">
+        <header class="entete-parchemin"><h2>Paramètres du gladiateur</h2></header>
+        <div class="param-grille">
+          <div class="param-fiche">
+            <canvas id="param-canvas" class="apercu"></canvas>
+            <h3 id="param-nom"></h3>
+            <p id="param-niveau" class="niveau-texte"></p>
+            <div id="param-record" class="record"></div>
+          </div>
+          <div class="param-points" id="param-points">
+            <h3>Points de compétence : <span class="points-libres" id="param-points-libres">0</span></h3>
+            <p class="aide" id="param-aide-points"></p>
+            <div id="param-attributs" class="liste-attributs"></div>
+            <div class="rangee-boutons">
+              <button class="btn petit" id="param-annuler" disabled>Annuler</button>
+              <button class="btn btn-or petit" id="param-valider" disabled>✔ Valider la répartition</button>
+            </div>
+            <div id="param-test" class="bloc-test" hidden>
+              <strong>Mode test</strong>
+              <button class="btn petit" data-victoire="1">Simuler une victoire</button>
+              <button class="btn petit" data-victoire="0">Simuler une défaite</button>
+            </div>
+          </div>
+          <div class="param-stats-bloc">
+            <h3>Statistiques</h3>
+            <div id="param-stats" class="stats-detail"></div>
+          </div>
+        </div>
+        <div class="param-sauvegarde">
+          <h3>Sauvegarde</h3>
+          <p class="aide">Ton gladiateur est sauvegardé automatiquement dans ce navigateur. Exporte-le pour le garder en sécurité ou le jouer sur un autre ordinateur.</p>
+          <div class="sauvegarde-grille">
+            <div>
+              <button class="btn petit" id="param-exporter">📤 Exporter (copier le code)</button>
+              <textarea id="param-code-export" readonly rows="3" hidden></textarea>
+            </div>
+            <div>
+              <textarea id="param-code-import" rows="3" placeholder="Colle ici un code de sauvegarde (AG1…)"></textarea>
+              <button class="btn petit" id="param-importer">📥 Importer</button>
+            </div>
+          </div>
+          <button class="btn petit danger" id="param-supprimer">🗑 Supprimer ce gladiateur</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Combat ===== -->
+    <section id="ecran-combat" class="ecran">
+      <div class="combat-haut">
+        <div class="fiche-combattant" id="fiche-0"></div>
+        <div class="combat-centre">
+          <div class="combat-arene" id="combat-arene"></div>
+          <div class="combat-manche" id="combat-manche"></div>
+          <div class="minuteur" id="combat-minuteur" hidden><span>20</span></div>
+          <div class="bandeau-tour" id="combat-tour"></div>
+        </div>
+        <div class="fiche-combattant droite" id="fiche-1"></div>
+      </div>
+      <div class="bandeau-attente" id="combat-attente" hidden></div>
+      <div class="combat-intro" id="combat-intro"></div>
+      <div class="combat-bas">
+        <div class="journal" id="combat-journal"></div>
+        <div class="barre-actions" id="combat-actions"></div>
+        <div class="combat-options">
+          <button class="btn petit bouton-son" id="combat-son" data-texte="Son" title="Volume de la musique et des bruitages">🔊 Son</button>
+          <button class="btn petit danger" id="combat-abandon">🏳 Abandonner</button>
+        </div>
+      </div>
+      <div class="combat-resultat" id="combat-resultat" hidden></div>
+    </section>
+  </main>
+
+  <!-- Réglages du son (curseurs de volume) -->
+  <div id="panneau-son" class="panneau-son" hidden>
+    <h3>Réglages du son</h3>
+    <label class="reglage-volume">
+      <span>🎵 Musique</span>
+      <input type="range" id="volume-musique" min="0" max="100" step="5">
+      <b id="volume-musique-valeur"></b>
+    </label>
+    <label class="reglage-volume">
+      <span>⚔ Bruitages</span>
+      <input type="range" id="volume-effets" min="0" max="100" step="5">
+      <b id="volume-effets-valeur"></b>
+    </label>
+  </div>
+
+  <!-- Infobulle des actions de combat -->
+  <div id="combat-infobulle" class="infobulle" hidden></div>
+
+  <!-- Défi reçu -->
+  <div id="modal-defi" class="modal" hidden>
+    <div class="parchemin modal-carte">
+      <h2>⚔ Un défi !</h2>
+      <p id="modal-defi-texte"></p>
+      <div class="barre-temps"><i id="modal-defi-barre"></i></div>
+      <div class="rangee-boutons">
+        <button class="btn" id="modal-defi-refuser">Refuser</button>
+        <button class="btn btn-or" id="modal-defi-accepter">Accepter le combat !</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Défi envoyé, en attente de réponse -->
+  <div id="defi-envoye" class="defi-envoye" hidden>
+    <span></span>
+    <button class="btn petit" id="defi-envoye-annuler">Annuler</button>
+  </div>
+
+  <div id="notifications" aria-live="polite"></div>
+  <div id="voile"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

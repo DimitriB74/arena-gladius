@@ -1,0 +1,22 @@
+{
+  "name": "arena-gladius",
+  "version": "1.0.0",
+  "description": "ARENA GLADIUS — combats de gladiateurs 1v1 au tour par tour, jouables dans le navigateur",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}
