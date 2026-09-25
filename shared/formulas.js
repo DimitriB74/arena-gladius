@@ -1,7 +1,7 @@
 // ============================================================================
 //  ARENA GLADIUS — shared/formulas.js
 //
-//  Toutes les formules du jeu (stats, précision, dégâts, économie...).
+//  Toutes les formules du jeu (stats, combat en temps réel, dégâts, économie...).
 //  Fonctions PURES : elles ne modifient rien et ne tirent jamais de hasard
 //  elles-mêmes — quand il faut de l'aléatoire, on leur passe une fonction
 //  `alea` (par défaut Math.random), ce qui permet de les tester facilement.
@@ -9,8 +9,8 @@
 // ============================================================================
 
 import {
-  ARMES, ARMURES, AMELIORATION, COMMERCE, STATS, ACTIONS,
-  PROGRESSION, RECOMPENSES, ORDRE_ATTRIBUTS,
+  ARMES, ARMURES, AMELIORATION, COMMERCE, STATS, TEMPS_REEL,
+  PROGRESSION, RECOMPENSES, ORDRE_ATTRIBUTS, CREATION,
 } from './data.js';
 
 // ----------------------------------------------------------------------------
@@ -74,9 +74,8 @@ export function statsArme(objet) {
     nom: base.nom,
     niveau,
     degats: arrondi1(base.degats * multAmelioration(niveau)),
-    precision: base.precision,
-    porteeMin: base.porteeMin,
-    porteeMax: base.porteeMax,
+    cadence: base.cadence,
+    allonge: base.allonge,
     ignoreArmure: base.ignoreArmure,
     coutStamina: base.coutStamina,
   };
@@ -107,6 +106,19 @@ export function totalPointsAttributs(attr) {
   return ORDRE_ATTRIBUTS.reduce((s, a) => s + (attr[a] || 0), 0);
 }
 
+/** Points placés dans les attributs (au-delà de la valeur de départ de chacun) */
+export function pointsInvestis(attr) {
+  return totalPointsAttributs(attr) - ORDRE_ATTRIBUTS.length * CREATION.valeurDepart;
+}
+
+/** Prix d'une réinitialisation des points de compétence (0 s'il n'y a rien à rendre) */
+export function coutReinitialisation(attr) {
+  const n = pointsInvestis(attr);
+  if (n <= 0) return 0;
+  const { coutParPoint, coutMinimum } = PROGRESSION.reinitialisation;
+  return Math.max(coutMinimum, n * coutParPoint);
+}
+
 /** (G) Niveau du gladiateur d'après ses points de capacité gagnés */
 export function niveauPersonnage(pointsGagnes = 0) {
   return 1 + Math.floor(pointsGagnes / PROGRESSION.pointsParNiveau);
@@ -121,7 +133,7 @@ export function valeurEquipement(equipement = {}) {
 export function statsCombattant(perso) {
   const attr = perso.attributs;
   const equip = perso.equipement || {};
-  return {
+  const s = {
     nom: perso.nom,
     attributs: { ...attr },
     niveau: niveauPersonnage(perso.pointsGagnes),
@@ -131,31 +143,40 @@ export function statsCombattant(perso) {
     armure: armureTotale(equip),
     arme: statsArme(equip.arme),
   };
+  s.tr = statsTempsReel(s);
+  return s;
 }
 
 // ----------------------------------------------------------------------------
-//  Combat : précision, critiques, dégâts
-//  `att` et `def` sont des objets renvoyés par statsCombattant()
+//  Combat en temps réel : ce que les attributs changent
 // ----------------------------------------------------------------------------
-/** Portée : l'arme peut-elle frapper à cette distance ? */
-export function aPortee(arme, distance) {
-  return distance >= arme.porteeMin && distance <= arme.porteeMax;
+/**
+ * Vitesse → course et saut ; Agilité + arme → cadence des attaques ;
+ * Endurance → stamina qui remonte ; Défense + bouclier → garde.
+ */
+export function statsTempsReel(s) {
+  const { deplacement, saut, cadence, stamina, parade, attaques, allonges } = TEMPS_REEL;
+  const a = s.attributs;
+  const multCourse = Math.min(deplacement.multMax, 1 + a.vitesse * deplacement.parPointVitesse);
+  const multSaut = Math.min(saut.multMax, 1 + a.vitesse * saut.parPointVitesse);
+  const multCadence = borner(
+    (1 + a.agilite * cadence.parPointAgilite) * (1 + (s.arme.cadence || 0) / 100),
+    cadence.multMin, cadence.multMax,
+  );
+  return {
+    vitesse: Math.round(deplacement.vitesseBase * multCourse),
+    impulsionSaut: Math.round(saut.impulsionBase * multSaut),
+    cadence: arrondi1(multCadence * 100) / 100,
+    allonge: allonges[s.arme.allonge] || allonges[1],
+    regenStamina: arrondi1(stamina.regenBase + a.endurance * stamina.regenParEndurance),
+    gardeMax: Math.round(parade.gardeBase + s.bouclierMax * parade.gardeParBouclier),
+    coutLourde: Math.round(attaques.lourde.cout * s.arme.coutStamina),
+  };
 }
 
-/** (D) Esquive due à la Vitesse : seulement si le défenseur est plus rapide (en %) */
-export function esquiveVitesse(att, def) {
-  const ecart = def.attributs.vitesse - att.attributs.vitesse;
-  return borner(ecart * STATS.vitesseVersEsquive, 0, STATS.esquiveVitesseMax);
-}
-
-/** Chance de toucher (en %) pour une attaque donnée */
-export function chanceToucher(actionId, att, def) {
-  const action = ACTIONS[actionId];
-  const chance = action.precision
-    + att.arme.precision
-    + (att.attributs.agilite - def.attributs.agilite) * STATS.agiliteVersPrecision
-    - esquiveVitesse(att, def);
-  return borner(Math.round(chance), STATS.precisionMin, STATS.precisionMax);
+/** Durée (s) d'une phase d'attaque, raccourcie par la cadence */
+export function dureePhase(typeAttaque, phase, att) {
+  return TEMPS_REEL.attaques[typeAttaque][phase] / att.tr.cadence;
 }
 
 /** Chance de coup critique (en %) */
@@ -174,85 +195,16 @@ export function degatsBase(att) {
   return arrondi1(att.arme.degats + att.attributs.force * STATS.forceVersDegats);
 }
 
-/** Dégâts moyens (sans aléa ni critique) — pour l'affichage et l'IA */
-export function degatsEstimes(actionId, att, def, protege = false) {
-  const action = ACTIONS[actionId];
-  const brut = degatsBase(att) * action.mult;
-  let d = brut * (1 - reductionArmure(def, att.arme.ignoreArmure));
-  if (protege) d *= 1 - ACTIONS.proteger.reduction;
-  return Math.max(STATS.degatsMin, Math.round(d));
-}
-
 /**
- * Tire une attaque complète : touche ? critique ? dégâts ?
- * Renvoie { touche, critique, degats, chance }
+ * Dégâts d'une attaque ('legere' | 'lourde') de `att` sur `def`.
+ * options : alea (hasard ±10 %), critique (×1,5), pare (garde levée)
  */
-export function tirerAttaque(actionId, att, def, { protege = false, alea = Math.random } = {}) {
-  const chance = chanceToucher(actionId, att, def);
-  if (alea() * 100 >= chance) return { touche: false, critique: false, degats: 0, chance };
-
-  const action = ACTIONS[actionId];
-  const variation = STATS.aleaMin + alea() * (STATS.aleaMax - STATS.aleaMin);
-  let d = degatsBase(att) * action.mult * variation;
-  const critique = alea() * 100 < chanceCritique(att);
+export function degatsCoup(typeAttaque, att, def, { alea = null, critique = false } = {}) {
+  const variation = alea ? STATS.aleaMin + alea() * (STATS.aleaMax - STATS.aleaMin) : 1;
+  let d = degatsBase(att) * TEMPS_REEL.attaques[typeAttaque].mult * variation;
   if (critique) d *= STATS.multCritique;
   d *= 1 - reductionArmure(def, att.arme.ignoreArmure);
-  if (protege) d *= 1 - ACTIONS.proteger.reduction;
-  return { touche: true, critique, degats: Math.max(STATS.degatsMin, Math.round(d)), chance };
-}
-
-/** Les dégâts touchent d'abord le bouclier, puis les PV */
-export function appliquerDegats(degats, bouclier, pv) {
-  const absorbe = Math.min(bouclier, degats);
-  return { bouclier: bouclier - absorbe, pv: Math.max(0, pv - (degats - absorbe)), absorbe };
-}
-
-// ----------------------------------------------------------------------------
-//  Coûts et récupération de stamina
-// ----------------------------------------------------------------------------
-/** Coût en stamina d'une action pour ce combattant (Vitesse, arme) */
-export function coutAction(actionId, att) {
-  const action = ACTIONS[actionId];
-  if (action.type === 'deplacement' || action.type === 'charge') {
-    // (D) La Vitesse rend les déplacements moins chers
-    const reduc = Math.max(
-      STATS.coutDeplacementPlancher,
-      1 - (att.attributs.vitesse - 1) * STATS.vitesseReductionDeplacement,
-    );
-    let cout = Math.round(action.cout * reduc);
-    if (action.type === 'charge') cout = Math.round(cout + ACTIONS[action.attaque].cout * (att.arme.coutStamina - 1));
-    return Math.max(1, cout);
-  }
-  if (action.type === 'attaque') return Math.round(action.cout * att.arme.coutStamina);
-  return action.cout;
-}
-
-/** Stamina regagnée au début de chaque tour du combattant */
-export function regenParTour() {
-  return STATS.regenStaminaParTour;
-}
-
-/** Stamina regagnée avec « Se reposer » */
-export function recuperationRepos(att) {
-  return Math.round(att.staminaMax * ACTIONS.reposer.recuperation);
-}
-
-/** Points de bouclier rechargés avec « Se protéger » */
-export function rechargeBouclier(att) {
-  return Math.round(att.bouclierMax * ACTIONS.proteger.rechargeBouclier);
-}
-
-/** (E) Chance de réussite de « Provoquer » (en %) */
-export function chanceProvocation(att, def) {
-  const p = ACTIONS.provoquer;
-  return borner(p.chanceBase + (att.attributs.agilite - def.attributs.agilite) * p.chanceParAgilite,
-    p.chanceMin, p.chanceMax);
-}
-
-/** Ordre de jeu : la plus grande Vitesse commence, égalité = hasard. Renvoie 0 ou 1 */
-export function premierJoueur(a, b, alea = Math.random) {
-  if (a.attributs.vitesse !== b.attributs.vitesse) return a.attributs.vitesse > b.attributs.vitesse ? 0 : 1;
-  return alea() < 0.5 ? 0 : 1;
+  return Math.max(STATS.degatsMin, Math.round(d));
 }
 
 // ----------------------------------------------------------------------------

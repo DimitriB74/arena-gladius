@@ -1,6 +1,6 @@
 # ⚔ ARENA GLADIUS
 
-Combats de gladiateurs **1v1 au tour par tour**, jouables dans le navigateur avec tes amis.
+Combats de gladiateurs **1v1 en temps réel**, jouables dans le navigateur avec tes amis.
 Crée ton gladiateur, équipe-le chez le forgeron et l'armurière, puis entre au Colisée :
 affronte un bot (3 niveaux de difficulté) ou défie un ami en ligne.
 
@@ -113,33 +113,62 @@ Bon à savoir :
   répartir tes points de compétence et à sauvegarder.
 
 ### Attributs (maximum 100 chacun)
-| Attribut | Effet |
+| Attribut | Effet en combat |
 |---|---|
-| 💪 Force | +3 dégâts par point |
-| 🎯 Agilité | précision et esquive (±2 % par point d'écart avec l'adversaire), critiques |
-| 🛡 Défense | réduit les dégâts reçus, +2 points de bouclier |
+| 💪 Force | dégâts de tes attaques (+3 de base par point) |
+| 🎯 Agilité | vitesse d'attaque (+1,2 % par point) et coups critiques |
+| 🛡 Défense | réduit les dégâts reçus et renforce ta garde |
 | ❤ Vitalité | +8 PV |
-| ⚡ Endurance | +5 stamina max |
-| 🪶 Vitesse | joue en premier, esquive les plus lents (+1,5 % par point d'avance), déplacements moins chers |
+| ⚡ Endurance | plus de stamina, qui remonte plus vite |
+| 🪶 Vitesse | course plus rapide et sauts plus hauts |
 
-### Combat
-La piste fait 10 cases. Chacun joue une action par tour (20 secondes maximum, sinon
-« Se reposer » est joué automatiquement). Tu récupères 5 stamina au début de chaque tour.
+Les armes ont aussi leur caractère : la dague frappe vite, la lance et le trident frappent
+de loin, le marteau frappe très fort mais lentement.
 
-| Action | Touche | Stamina | Effet |
-|---|---|---|---|
-| Avancer / Reculer | Z / S (ou flèches) | 3 | une case |
-| Charger | C | 15 | fonce au contact (adversaire à 2 ou 3 cases) + attaque rapide |
-| Attaque rapide | 1 | 5 | ×0,6 dégâts, 85 % de précision |
-| Attaque normale | 2 | 10 | ×1 dégâts, 70 % |
-| Attaque puissante | 3 | 20 | ×1,8 dégâts, 45 % |
-| Se protéger | P | 0 | −50 % de dégâts jusqu'à ton prochain tour, +20 % de bouclier (pas deux fois de suite) |
-| Se reposer | R | 0 | +40 % de stamina |
-| Provoquer | T | 3 | l'adversaire perd 10 stamina (selon l'Agilité, pas deux fois de suite) |
+### Combat (en temps réel)
+Deux gladiateurs s'affrontent dans l'arène tirée au sort. On gagne quand les PV de
+l'adversaire tombent à 0, ou s'il **tombe dans un trou** (voir « Les arènes » plus bas).
+Après **2 minutes**, les juges donnent la victoire au plus haut % de PV restants.
 
-- Les dégâts touchent d'abord le **bouclier**, puis les **PV**.
-- Après **30 manches**, les juges donnent la victoire au plus haut % de PV restants.
-- Abandonner compte comme une défaite. Un joueur déconnecté a **30 secondes** pour revenir.
+| Commande | Clavier AZERTY (QWERTY) | Manette |
+|---|---|---|
+| Se déplacer | Q / D ou ← → (A / D) | stick ou croix |
+| Sauter, double saut | Z ou Espace (W) | A |
+| Descendre d'une plateforme | S ou ↓ | bas |
+| Attaque légère | E ou clic gauche | X |
+| Attaque lourde | R ou clic droit | Y |
+| Parer (maintenir) | A (Q) | gâchettes |
+| Esquive (dash) | Maj | B |
+
+- **Attaque légère** : rapide, peu de dégâts. **Attaque lourde** : se prépare plus longtemps
+  (un **!** rouge prévient l'adversaire), fait très mal et coûte de la stamina.
+- **Parer** : les coups reçus de face vident ta **garde** (barre bleue) au lieu de tes PV.
+  Garde vide = **garde brisée**, tu es sonné. Si tu lèves la garde **au tout dernier
+  moment**, c'est une **parade parfaite** : c'est l'attaquant qui est sonné.
+- **Esquive** : un dash rapide pendant lequel on est invincible. Coûte de la stamina.
+- **Stamina** (barre jaune) : se vide avec les esquives et les attaques lourdes, puis
+  remonte toute seule.
+- Abandonner compte comme une défaite. Si un joueur se déconnecte, le combat se met en
+  **pause** : il a **30 secondes** pour revenir.
+
+### Les arènes
+L'arène est tirée au sort à chaque entrée au Colisée. Aucun bonus de stats : c'est le
+**terrain** qui change. Chaque arène est symétrique, donc équitable.
+
+| Arène | Terrain |
+|---|---|
+| Grand Colisée | caisses d'armes, trois gradins de marbre ; aucun piège |
+| Arène du Désert | ruines de grès à escalader, **deux gouffres sans fond** près des murs |
+| Clairière Sacrée | souches, tronc couché, passerelles suspendues : la plus verticale |
+| Cratère Ardent | rochers de basalte, **deux bassins de lave** entre les combattants |
+| Col Enneigé | rochers, **une crevasse** au centre, bordée de **glace glissante** |
+
+- **Blocs** (caisses, pierres, souches, rochers) : solides, on monte dessus en sautant.
+- **Plateformes** : on les traverse par-dessous et on en descend avec **S** / ↓.
+- **Trous** (gouffre, lave, crevasse) : y tomber, c'est **perdu**. Quand on tombe d'un bord,
+  il reste le double saut pour se rattraper. Une esquive lancée près du bord passe
+  au-dessus, et une attaque lourde près du bord peut y envoyer l'adversaire.
+- **Glace** : on accélère et on freine mal, même quand on est repoussé par un coup.
 
 ### Jouer en solo : les bots
 Au Colisée, **🤖 Combattre un bot** propose 3 difficultés. Le bot est créé à ta mesure
@@ -147,9 +176,10 @@ Au Colisée, **🤖 Combattre un bot** propose 3 difficultés. Le bot est créé
 
 | Difficulté | Force du bot | Façon de jouer |
 |---|---|---|
-| 🌿 Facile | ~15 % de points et ~35 % d'équipement en moins | maladroit : joue souvent au hasard |
-| ⚔️ Normal | proche de toi | réfléchit : frappe à portée, charge, se repose |
-| 🔥 Difficile | ~8 % de points et ~10 % d'équipement en plus | rusé : anticipe tes coups, se met en garde, ne s'expose pas |
+| 🌿 Facile | ~15 % de points et ~35 % d'équipement en moins | lent à réagir, pare rarement, hésite souvent |
+| ⚔️ Normal | proche de toi | pare ou esquive une partie de tes coups, attaque à portée |
+| 🔥 Difficile | ~5 % de points et d'équipement en plus | réagit vite, pare (souvent parfaitement), esquive tes attaques lourdes, punit tes erreurs |
+
 
 ### Récompenses
 | | Crédits | Points de compétence |
@@ -185,8 +215,8 @@ colle-le dans **Importer** sur l'autre ordinateur.
 
 ## 6. Rééquilibrer le jeu
 
-Toutes les valeurs sont dans **`shared/data.js`** (armes, armures, prix, actions, stats,
-récompenses, difficultés des bots…) et toutes les formules dans **`shared/formulas.js`**. Ces fichiers servent
+Toutes les valeurs sont dans **`shared/data.js`** (armes, armures, prix, combat, terrains des
+arènes, récompenses, difficultés des bots…) et toutes les formules dans **`shared/formulas.js`**. Ces fichiers servent
 à la fois au serveur et au navigateur : une modification s'applique partout.
 
 Le **📜 Codex de l'arène** (écran titre) affiche les tableaux calculés à partir de ces fichiers :
@@ -198,26 +228,32 @@ pratique pour vérifier un réglage. Pense à relancer `npm test` après un chan
 server/
   index.js      Express + Socket.IO : sert le jeu et gère les connexions
   lobby.js      joueurs connectés, défis, lancement des combats
-  matchs.js     un combat en réseau : minuteurs, IA, déconnexions, récompenses
-  combat.js     moteur de combat (logique pure, testée)
-  ai.js         bots : génération (3 difficultés) et choix des actions
+  matchs.js     un combat en réseau : simulation 60 fois/s, bots, déconnexions, récompenses
+  ai.js         bots : génération (3 difficultés) et cerveau en temps réel
 shared/
   data.js       toutes les données d'équilibrage
   formulas.js   toutes les formules
   boutique.js   achat, amélioration, revente, points, récompenses
   validation.js création du gladiateur et vérification des sauvegardes
+  combat.js     moteur du combat en temps réel (serveur ET navigateur)
+  terrain.js    terrain des arènes : blocs, plateformes, trous, glace
 client/
   index.html, css/
   js/main.js         démarrage, boucle d'affichage
   js/ecrans/         titre, création, village, boutique, arène, combat, paramètres, codex
-  js/rendu/          dessins canvas (gladiateur, village, boutiques, décors, combat)
+  js/rendu/          dessins canvas (gladiateur, village, boutiques, décors, terrains, combat)
   js/reseau.js       connexion au serveur
+  js/combat/         commandes (clavier, manette) et anticipation des mouvements
   js/defis.js        joueurs en ligne et défis
 tests/          tests automatiques (npm test)
 ```
 
-Le serveur **fait autorité** sur les combats : il tire les dés, calcule les dégâts et valide
-chaque action. Le navigateur n'envoie que des intentions et affiche l'état reçu.
+Le serveur **fait autorité** sur les combats : il simule le combat 60 fois par seconde et
+décide de chaque coup. Le navigateur n'envoie que les touches pressées. Pour que les
+commandes répondent tout de suite malgré le délai du réseau, il **anticipe** les mouvements
+de ton gladiateur avec les mêmes règles que le serveur, puis se recale en douceur ; l'adversaire
+est affiché de façon lissée. Pour tester en local comme sur un vrai serveur, ajoute
+`?latence=120` à l'adresse (120 ms de délai simulé).
 
 **Hors périmètre de la v1** (le code est prévu pour les ajouter plus tard) : 2v2, comptes avec
 mot de passe, base de données, classement, chat.

@@ -1,6 +1,7 @@
 // ============================================================================
-//  ARENA GLADIUS — tests réseau (lobby, défis, combats, déconnexions)
-//  Un vrai serveur Socket.IO est lancé dans le test, avec de vrais clients.
+//  ARENA GLADIUS — tests réseau (lobby, défis, combats en temps réel, déconnexions)
+//  Un vrai serveur Socket.IO est lancé dans le test, avec de vrais clients qui
+//  envoient leurs touches comme le ferait un navigateur.
 // ============================================================================
 
 import test from 'node:test';
@@ -8,13 +9,15 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { io as connecter } from 'socket.io-client';
-import { IA, COMBAT } from '../shared/data.js';
+import { COMBAT, TEMPS_REEL as T } from '../shared/data.js';
 import { attributsDeBase, nouveauPersonnage } from '../shared/validation.js';
 import { Lobby } from '../server/lobby.js';
 
-// Combats accélérés pour les tests
-IA.delaiReflexion = [0.01, 0.02];
+// Combats accélérés pour les tests : décompte court, coups qui font très mal
 COMBAT.delaiReconnexion = 1;
+T.decompte = 0.3;
+T.attaques.legere.mult = 3;
+T.attaques.lourde.mult = 6;
 
 let serveur, url;
 
@@ -67,17 +70,24 @@ async function client(nom, jeton = `jeton-${nom}-${Math.random().toString(36).sl
   return { s, id: infos.id, jeton, perso: p, infos };
 }
 
-/** Joue automatiquement : attaque si possible, sinon avance, sinon se repose */
+/**
+ * Joueur automatique : toutes les 16 ms, il avance vers l'adversaire et
+ * frappe quand il est assez près, comme un navigateur qui enverrait ses touches.
+ */
 function jouerAutomatiquement(c) {
-  let monIndex = null;
-  const jouer = (paquet) => {
-    const e = paquet.etat;
-    if (e.fini || e.tour !== monIndex || !e.possibles) return;
-    const choix = ['normale', 'rapide', 'charger', 'avancer', 'reposer'].find((id) => e.possibles[id]?.possible);
-    c.s.emit('match:action', { action: choix });
-  };
-  c.s.on('match:start', (p) => { monIndex = p.monIndex; setTimeout(() => jouer(p), 1600); });
-  c.s.on('match:state', jouer);
+  let monIndex = null, etat = null, seq = 0;
+  c.s.on('match:start', (p) => { monIndex = p.monIndex; etat = p.etat; });
+  c.s.on('match:state', (p) => { etat = p; });
+  const minuteur = setInterval(() => {
+    if (monIndex == null || !etat || etat.fini) return;
+    const moi = etat.c[monIndex], lui = etat.c[1 - monIndex];
+    const dx = lui.x - moi.x;
+    const pres = Math.abs(dx) < 110;
+    seq += 1;
+    c.s.emit('match:entrees', { e: [{ s: seq, g: !pres && dx < 0, d: !pres && dx > 0, legere: pres && seq % 3 === 0 }] });
+  }, 16);
+  c.arreter = () => clearInterval(minuteur);
+  return c;
 }
 
 // ----------------------------------------------------------------------------
@@ -95,7 +105,7 @@ test('un gladiateur incohérent est refusé', async () => {
   s.close();
 });
 
-test('lobby, défi accepté et combat complet entre deux joueurs', async () => {
+test('lobby, défi accepté et combat complet en temps réel entre deux joueurs', async () => {
   const a = await client('Achille');
   const b = await client('Brutus');
   const lobby = await attendre(a.s, 'lobby:update', (l) => l.some((j) => j.id === b.id));
@@ -104,10 +114,10 @@ test('lobby, défi accepté et combat complet entre deux joueurs', async () => {
   jouerAutomatiquement(a);
   jouerAutomatiquement(b);
   const defi = attendre(b.s, 'challenge:incoming');
-  a.s.emit('challenge:send', { cible: b.id, arene: 'volcan' });
+  a.s.emit('challenge:send', { cible: b.id, arene: 'colisee' });
   const d = await defi;
   assert.equal(d.de.nom, 'Achille');
-  assert.equal(d.arene, 'volcan');
+  assert.equal(d.arene, 'colisee');
 
   const debutA = attendre(a.s, 'match:start');
   const debutB = attendre(b.s, 'match:start');
@@ -115,16 +125,26 @@ test('lobby, défi accepté et combat complet entre deux joueurs', async () => {
   const [ma, mb] = await Promise.all([debutA, debutB]);
   assert.equal(ma.monIndex, 0);
   assert.equal(mb.monIndex, 1);
-  assert.equal(ma.etat.arene, 'volcan');
+  assert.equal(ma.arene, 'colisee');
   assert.equal(ma.mode, 'joueur');
+  assert.equal(ma.presentations.length, 2);
+  assert.ok(ma.presentations[0].stats.tr.vitesse > 0, 'les stats temps réel sont envoyées');
 
-  const [fa, fb] = await Promise.all([attendre(a.s, 'match:end', null, 60000), attendre(b.s, 'match:end', null, 60000)].map((p) => p));
+  // L'état arrive en continu, avec le numéro de la dernière entrée jouée
+  const etat = await attendre(a.s, 'match:state', (p) => p.phase === 'combat' && p.ack > 0);
+  assert.equal(etat.c.length, 2);
+
+  const [fa, fb] = await Promise.all([attendre(a.s, 'match:end', null, 30000), attendre(b.s, 'match:end', null, 30000)]);
+  a.arreter(); b.arreter();
   assert.notEqual(fa.victoire, fb.victoire, 'un seul vainqueur');
   const gagnant = fa.victoire ? fa : fb, perdant = fa.victoire ? fb : fa;
   assert.equal(gagnant.recompense.points, 3);
   assert.ok(gagnant.recompense.credits >= 100);
   assert.equal(perdant.recompense.points, 1);
   assert.equal(perdant.recompense.credits, 40);
+  // Chacun sait contre qui il s'est battu (bouton « Revanche »)
+  assert.equal(fa.adversaireId, b.id);
+  assert.equal(fb.adversaireId, a.id);
   a.s.close();
   b.s.close();
 });
@@ -143,19 +163,28 @@ test('défi refusé', async () => {
   b.s.close();
 });
 
-test('combat contre un bot Difficile jusqu’au bout', async () => {
-  const a = await client('Octavia');
-  jouerAutomatiquement(a);
+test('combat contre un bot Difficile jusqu’au bout, puis « Rejouer »', async () => {
+  const a = jouerAutomatiquement(await client('Octavia'));
   const debut = attendre(a.s, 'match:start');
   a.s.emit('match:training', { arene: 'neige', difficulte: 'difficile' });
   const m = await debut;
   assert.equal(m.mode, 'ia');
   assert.equal(m.difficulte, 'difficile');
-  assert.equal(m.etat.combattants[1].ia, true);
-  const fin = await attendre(a.s, 'match:end', null, 60000);
+  assert.equal(m.presentations[1].ia, true);
+  const fin = await attendre(a.s, 'match:end', null, 30000);
   assert.equal(fin.mode, 'ia');
   assert.equal(fin.difficulte, 'difficile');
   assert.equal(fin.recompense.points, fin.victoire ? 2 : 0);
+  assert.equal(fin.adversaireId, null, 'pas de revanche contre un bot : on rejoue');
+
+  // « Rejouer » : un nouveau combat démarre aussitôt, même difficulté
+  const reprise = attendre(a.s, 'match:start', (p) => p.idMatch !== m.idMatch);
+  a.s.emit('match:training', { difficulte: 'difficile' });
+  const m2 = await reprise;
+  assert.equal(m2.difficulte, 'difficile');
+  a.s.emit('match:forfeit');
+  await attendre(a.s, 'match:end', (r) => r.idMatch === m2.idMatch);
+  a.arreter();
   a.s.close();
 });
 
@@ -166,11 +195,28 @@ test('difficulté inconnue : on retombe sur Normal', async () => {
   const m = await debut;
   assert.equal(m.difficulte, 'normal');
   a.s.emit('match:forfeit');
+  const fin = await attendre(a.s, 'match:end');
+  assert.equal(fin.raison, 'abandon');
+  assert.equal(fin.victoire, false);
+  a.s.close();
+});
+
+test('entrées invalides ignorées, le combat continue', async () => {
+  const a = await client('Nerva');
+  const debut = attendre(a.s, 'match:start');
+  a.s.emit('match:training', { difficulte: 'facile' });
+  await debut;
+  a.s.emit('match:entrees', null);
+  a.s.emit('match:entrees', { e: 'n’importe quoi' });
+  a.s.emit('match:entrees', { e: [{ s: 'x', d: true }, { s: 1, d: 'oui' }, null] });
+  const etat = await attendre(a.s, 'match:state', (p) => p.phase === 'combat');
+  assert.equal(etat.fini, false);
+  a.s.emit('match:forfeit');
   await attendre(a.s, 'match:end');
   a.s.close();
 });
 
-test('déconnexion : retour à temps, puis défaite par abandon et résultat remis au retour', async () => {
+test('déconnexion : pause, retour à temps, puis défaite et résultat remis au retour', async () => {
   const a = await client('Titus');
   const b = await client('Varro');
   const defi = attendre(b.s, 'challenge:incoming');
@@ -180,8 +226,8 @@ test('déconnexion : retour à temps, puis défaite par abandon et résultat rem
   b.s.emit('challenge:response', { idDefi: d.idDefi, accepte: true });
   const m = await debutA;
 
-  // Varro se déconnecte puis revient avec le même jeton : il retrouve son combat
-  const attente = attendre(a.s, 'match:state', (p) => p.attente?.index === 1);
+  // Varro se déconnecte : le combat est en pause, puis il revient avec le même jeton
+  const attente = attendre(a.s, 'match:state', (p) => p.attente?.index === 1 && p.pause);
   b.s.close();
   await attente;
   const b2 = connecter(url, { transports: ['websocket'], forceNew: true });
@@ -191,6 +237,8 @@ test('déconnexion : retour à temps, puis défaite par abandon et résultat rem
   const r = await reprise;
   assert.equal(r.idMatch, m.idMatch);
   assert.equal(r.monIndex, 1);
+  const repris = await attendre(a.s, 'match:state', (p) => !p.pause && !p.attente);
+  assert.equal(repris.pause, false);
 
   // Il repart pour de bon : au bout du délai, Titus gagne
   b2.close();
@@ -209,24 +257,4 @@ test('déconnexion : retour à temps, puis défaite par abandon et résultat rem
   assert.equal(acc.resultats[0].recompense.points, 1);
   a.s.close();
   b3.close();
-});
-
-test('actions refusées : hors tour et action impossible', async () => {
-  const a = await client('Nerva');
-  const debut = attendre(a.s, 'match:start');
-  a.s.emit('match:training', {});
-  const m = await debut;
-  await new Promise((r) => setTimeout(r, 1700));
-  const e = m.etat;
-  if (e.tour === 0) {
-    const erreur = attendre(a.s, 'match:error');
-    a.s.emit('match:action', { action: 'puissante' }); // hors de portée au départ
-    const err = await erreur;
-    assert.match(err.message, /portée/);
-  }
-  a.s.emit('match:forfeit');
-  const fin = await attendre(a.s, 'match:end');
-  assert.equal(fin.raison, 'abandon');
-  assert.equal(fin.victoire, false);
-  a.s.close();
 });

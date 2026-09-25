@@ -4,20 +4,20 @@
 //  Bots (adversaires contrôlés par l'ordinateur), 3 difficultés :
 //  - genererAdversaire(perso, alea, difficulte) : un gladiateur adapté au
 //    joueur (plus faible en Facile, plus fort en Difficile)
-//  - choisirAction(etat, i, alea, difficulte)   : décide de l'action à jouer
+//  - creerCerveau(difficulte) + entreeBot(...)   : à chaque pas du combat en
+//    temps réel, décide des touches sur lesquelles le bot appuie
 //
 //  Les réglages de chaque difficulté sont dans shared/data.js (DIFFICULTES).
 // ============================================================================
 
 import {
   IA, DIFFICULTES, SKINS, ORDRE_ATTRIBUTS, CREATION, ARMES, ARMURES, ORDRE_EMPLACEMENTS, ORDRE_MATERIAUX,
-  JEU, AMELIORATION, ACTIONS,
+  JEU, AMELIORATION, TEMPS_REEL as T,
 } from '../shared/data.js';
 import {
-  totalPointsAttributs, valeurEquipement, chanceToucher, degatsEstimes, coutAmelioration, coutAction,
-  aPortee, regenParTour,
+  totalPointsAttributs, valeurEquipement, coutAmelioration, dureePhase,
 } from '../shared/formulas.js';
-import { actionsPossibles, distance } from './combat.js';
+import { terrainDe, trouSous, supportSous, surGlace } from '../shared/terrain.js';
 
 const auHasard = (liste, alea) => liste[Math.floor(alea() * liste.length)];
 const reglages = (difficulte) => DIFFICULTES[difficulte] || DIFFICULTES.normal;
@@ -116,157 +116,292 @@ export function genererAdversaire(perso, alea = Math.random, difficulte = 'norma
 }
 
 // ----------------------------------------------------------------------------
-//  Outils d'analyse
+//  Cerveau du bot en temps réel
+//  À chaque pas du serveur, le bot « appuie » sur des touches, comme un joueur.
+//  Il voit ce que fait l'adversaire avec un temps de réaction (selon la
+//  difficulté), pare ou esquive les coups qui arrivent, attaque à portée,
+//  punit quand l'adversaire est sonné, et le suit sur les plateformes.
+//  Il connaît le terrain : il saute les obstacles et les trous, freine avant
+//  le vide, remonte s'il y tombe, et cherche à y pousser son adversaire.
 // ----------------------------------------------------------------------------
-/** Attaques jouables par `att` contre `def` à la distance donnée, avec la stamina donnée */
-function attaquesPossibles(att, def, d, stamina, protegeAdverse) {
-  return ['rapide', 'normale', 'puissante']
-    .filter((id) => aPortee(att.stats.arme, d) && stamina >= coutAction(id, att.stats))
-    .map((id) => {
-      const chance = chanceToucher(id, att.stats, def.stats) / 100;
-      const degats = degatsEstimes(id, att.stats, def.stats, protegeAdverse);
-      return { id, chance, degats, espere: chance * degats, cout: coutAction(id, att.stats) };
-    });
+const MARGE_PORTEE = 40;   // la zone de frappe part un peu devant le corps
+const DEMI = T.corps.largeur / 2;
+const MARGE_BORD = 12;     // le bot veut au moins 12 unités de pied sur le bord
+
+/** Distance à partir de laquelle une attaque de `c` peut toucher */
+function portee(c, type = 'legere') {
+  return c.stats.tr.allonge * T.attaques[type].allonge + MARGE_PORTEE;
+}
+
+/** Y a-t-il (vraiment) quelque chose sous les pieds en x (à la hauteur y), ou le vide ? */
+const vide = (terrain, x, y) => supportSous(terrain, x, y + 0.5, DEMI - MARGE_BORD) === null;
+
+/** Distance avant le vide en avançant dans le sens `sens` (Infinity si rien jusqu'à `max`) */
+function distanceDuVide(terrain, c, sens, max) {
+  for (let d = 0; d <= max; d += 8) {
+    const x = c.x + sens * d;
+    if (x < terrain.murGauche + DEMI || x > terrain.murDroit - DEMI) return Infinity;
+    if (vide(terrain, x, c.y)) return d;
+  }
+  return Infinity;
+}
+
+/** Le bloc qui barre la route juste devant (plus haut que les pieds) */
+function blocDevant(terrain, c, sens, distance) {
+  return terrain.blocs.find((b) => {
+    if (b.y2 <= c.y + 1 || b.y1 >= c.y + T.corps.hauteur) return false;
+    const d = ((sens > 0 ? b.x1 - DEMI : b.x2 + DEMI) - c.x) * sens;
+    return d >= -1 && d <= distance;
+  }) || null;
+}
+
+/** Distance d'arrêt au sol (en appuyant dans l'autre sens), glace comprise */
+function distanceArret(terrain, c) {
+  const glisse = c.sur < 0 && surGlace(terrain, c.x);
+  const frein = T.physique.acceleration * (glisse ? T.physique.glace.acceleration : 1);
+  return (c.vx * c.vx) / (2 * frein);
 }
 
 /**
- * Ce que l'adversaire pourra nous infliger à son prochain tour si la distance
- * reste `d` (pire cas : sa meilleure attaque qui touche, charge comprise).
+ * Tombé (ou en train de sauter) au-dessus d'un trou : viser le bord, sauter
+ * en retombant, esquiver vers le bord en dernier recours.
  */
-function menaceAdverse(moi, lui, d, jeMeProtege) {
-  const staminaSuivante = Math.min(lui.stats.staminaMax, lui.stamina + regenParTour());
-  let pire = 0;
-  for (const a of attaquesPossibles(lui, moi, d, staminaSuivante, jeMeProtege)) pire = Math.max(pire, a.degats);
-  const charge = ACTIONS.charger;
-  if (d >= charge.distanceMin && d <= charge.distanceMax && staminaSuivante >= coutAction('charger', lui.stats)) {
-    pire = Math.max(pire, degatsEstimes('rapide', lui.stats, moi.stats, jeMeProtege));
-  }
-  return pire;
+function survivre(terrain, moi, e) {
+  const trou = trouSous(terrain, moi.x);
+  if (!trou) return false;
+  // Au-delà de ces points, les pieds reposent bien sur le sol
+  const bordG = trou.x1 + DEMI - MARGE_BORD, bordD = trou.x2 - DEMI + MARGE_BORD;
+  let sens;
+  if (moi.sauts > 0 && Math.abs(moi.vx) > 150) sens = Math.sign(moi.vx);   // on continue la traversée
+  else sens = moi.x - bordG < bordD - moi.x ? -1 : 1;                      // sinon, le bord le plus proche
+  e.g = sens < 0;
+  e.d = sens > 0;
+  e.b = false;
+  e.p = false;
+  if (moi.vy < -50 && moi.y < 60 && moi.sauts > 0) e.saut = true;
+  else if (moi.sauts === 0 && moi.vy < 0 && moi.y > -5 && moi.recharges.esquive <= 0
+    && moi.stamina >= T.esquive.cout && Math.abs((sens > 0 ? bordD : bordG) - moi.x) < 170) e.esquive = true;
+  return true;
 }
 
-// ----------------------------------------------------------------------------
-//  Tactique « simple » (Facile et Normal)
-// ----------------------------------------------------------------------------
-function tactiqueSimple(etat, i, alea, avecCoupDeGrace) {
+/**
+ * Garde-fou avant chaque déplacement au sol : ne pas marcher dans le vide.
+ * Si l'adversaire est de l'autre côté, on saute par-dessus ; sinon on freine.
+ * Et on saute les obstacles (blocs) qui barrent la route.
+ */
+function securiser(terrain, moi, lui, e, veutAvancer) {
+  const sens = (e.d ? 1 : 0) - (e.g ? 1 : 0);
+  if (!sens) {
+    // Même sans avancer, on peut glisser (glace, recul) vers le vide
+    const glisse = Math.sign(moi.vx);
+    if (moi.auSol && glisse && distanceDuVide(terrain, moi, glisse, distanceArret(terrain, moi) + 20) < Infinity) {
+      e.g = glisse > 0;
+      e.d = glisse < 0;
+    }
+    return;
+  }
+  if (moi.auSol) {
+    const arret = sens === Math.sign(moi.vx) ? distanceArret(terrain, moi) : 0;
+    const d = distanceDuVide(terrain, moi, sens, arret + 30);
+    if (d < Infinity) {
+      const trou = trouSous(terrain, moi.x + sens * (d + DEMI + 8));
+      const auDela = trou && (sens > 0 ? lui.x > trou.x2 : lui.x < trou.x1);
+      if (veutAvancer && auDela) {
+        if (d < 45 + arret * 0.3) e.saut = true;          // traverser d'un saut
+      } else {
+        // Freiner (contre-braquer si on glisse vers le bord)
+        e.g = false;
+        e.d = false;
+        if (Math.sign(moi.vx) === sens && Math.abs(moi.vx) > 30) { if (sens > 0) e.g = true; else e.d = true; }
+        return;
+      }
+    }
+    if (blocDevant(terrain, moi, sens, 35)) e.saut = true;
+    return;
+  }
+  // En l'air : ne pas s'aventurer au-dessus du vide sans saut en réserve pour traverser
+  const devant = moi.x + sens * 50;
+  if (vide(terrain, devant, moi.y)) {
+    const trou = trouSous(terrain, devant);
+    const auDela = trou && (sens > 0 ? lui.x > trou.x2 : lui.x < trou.x1);
+    if (!(veutAvancer && auDela && moi.sauts > 0)) {
+      e.g = false;
+      e.d = false;
+      return;
+    }
+  }
+  if (moi.vy < 0 && moi.sauts > 0 && blocDevant(terrain, moi, sens, 60)) e.saut = true;   // double saut pour passer l'obstacle
+}
+
+export function creerCerveau(difficulte = 'normal', alea = Math.random) {
+  return {
+    d: reglages(difficulte),
+    alea,
+    tenues: { g: false, d: false, b: false, p: false },
+    pause: 0,               // hésitation en cours (s)
+    attaqueVue: null,       // attaque adverse en cours d'observation
+    vueDepuis: 0,
+    reponse: null,          // 'parade' | 'parfaite' | 'esquive' | 'rien'
+    prochaineDecision: 0,
+    envie: 'approcher',     // approcher | attendre | reculer
+  };
+}
+
+/** Renvoie l'entrée (touches) du bot pour ce pas de simulation */
+export function entreeBot(cerveau, etat, i, dt) {
+  const { d, alea } = cerveau;
   const moi = etat.combattants[i];
   const lui = etat.combattants[1 - i];
-  const possibles = actionsPossibles(etat, i);
-  const ok = (id) => possibles[id]?.possible;
-  const d = distance(etat);
-  const aPorteeAdverse = aPortee(lui.stats.arme, d);
-  const attaques = attaquesPossibles(moi, lui, d, moi.stamina, lui.protege);
+  const e = { ...cerveau.tenues, saut: false, legere: false, lourde: false, esquive: false };
+  const relacher = () => { e.g = false; e.d = false; e.b = false; e.p = false; };
 
-  // Coup de grâce
-  if (avecCoupDeGrace) {
-    const fatales = attaques.filter((a) => a.degats >= lui.pv + lui.bouclier).sort((a, b) => b.chance - a.chance);
-    if (fatales.length && fatales[0].chance >= 0.45) return fatales[0].id;
+  if (etat.phase !== 'combat' || moi.etat === 'ko' || moi.etat === 'victoire') {
+    relacher();
+    cerveau.tenues = { g: false, d: false, b: false, p: false };
+    return e;
   }
 
-  // À portée : on frappe
-  if (attaques.length) {
-    if (moi.pv < moi.stats.pvMax * 0.3 && ok('proteger') && alea() < 0.25) return 'proteger';
-    const reserve = moi.stamina - Math.max(...attaques.map((a) => a.cout));
-    attaques.sort((a, b) => b.espere - a.espere);
-    let choix = attaques[0];
-    if (attaques.length > 1 && reserve < 5 && alea() < 0.5) choix = attaques.find((a) => a.id === 'rapide') || choix;
-    return choix.id;
+  const dx = lui.x - moi.x;
+  const adx = Math.abs(dx);
+  const versLui = Math.sign(dx) || moi.dir;
+  const dy = lui.y - moi.y;
+  const terrain = terrainDe(etat.arene);
+
+  // --- 0. Au-dessus du vide : se sauver avant tout --------------------------
+  if (!moi.auSol && vide(terrain, moi.x, moi.y) && survivre(terrain, moi, e)) {
+    cerveau.tenues = { g: e.g, d: e.d, b: false, p: false };
+    return e;
   }
 
-  // À portée mais sans stamina
-  if (aPortee(moi.stats.arme, d)) {
-    if (aPorteeAdverse && ok('proteger') && alea() < 0.5) return 'proteger';
-    return 'reposer';
+  // --- 1. Réagir à une attaque adverse, après le temps de réaction ---------
+  const menace = lui.etat === 'attaque' && lui.attaque.phase === 'preparation' ? lui.attaque : null;
+  if (menace && cerveau.attaqueVue !== menace) {
+    cerveau.attaqueVue = menace;
+    cerveau.vueDepuis = 0;
+    cerveau.reponse = null;
+  }
+  if (!menace && lui.etat !== 'attaque') cerveau.attaqueVue = null;
+  if (cerveau.attaqueVue) cerveau.vueDepuis += dt;
+
+  const aPorteeDeLui = adx <= portee(lui, cerveau.attaqueVue?.type || 'legere') + 25 && Math.abs(dy) < 120;
+  if (cerveau.attaqueVue && cerveau.vueDepuis >= d.reaction && aPorteeDeLui && !cerveau.reponse) {
+    const lourde = cerveau.attaqueVue.type === 'lourde';
+    const r = alea();
+    if (lourde && r < d.esquive && moi.stamina >= T.esquive.cout && moi.recharges.esquive <= 0) cerveau.reponse = 'esquive';
+    else if (alea() < d.parade) cerveau.reponse = alea() < d.paradeParfaite ? 'parfaite' : 'parade';
+    else cerveau.reponse = 'rien';
   }
 
-  // Hors de portée : on s'approche
-  if (ok('charger') && moi.stamina - possibles.charger.cout >= 5 && alea() < 0.7) return 'charger';
-  if (moi.stamina < 12 && !aPorteeAdverse) return 'reposer';
-  if (ok('provoquer') && lui.stamina > 20 && alea() < 0.12) return 'provoquer';
-  if (ok('avancer')) return 'avancer';
-  return 'reposer';
-}
-
-// ----------------------------------------------------------------------------
-//  Tactique « avancée » (Difficile)
-// ----------------------------------------------------------------------------
-function tactiqueAvancee(etat, i, alea) {
-  const moi = etat.combattants[i];
-  const lui = etat.combattants[1 - i];
-  const possibles = actionsPossibles(etat, i);
-  const ok = (id) => possibles[id]?.possible;
-  const d = distance(etat);
-  const pvEffectifs = moi.pv + moi.bouclier;
-  const attaques = attaquesPossibles(moi, lui, d, moi.stamina, lui.protege);
-
-  // 1. Coup de grâce, même risqué
-  const fatales = attaques.filter((a) => a.degats >= lui.pv + lui.bouclier).sort((a, b) => b.chance - a.chance);
-  if (fatales.length && fatales[0].chance >= 0.35) return fatales[0].id;
-
-  // 2. Danger de mort au prochain tour adverse : garde, ou recul hors de portée
-  const menace = menaceAdverse(moi, lui, d, false);
-  if (menace >= pvEffectifs) {
-    if (ok('proteger')) return 'proteger';
-    if (ok('reculer') && menaceAdverse(moi, lui, d + 1, false) < pvEffectifs) return 'reculer';
-  }
-
-  // 3. À portée
-  if (attaques.length) {
-    // L'adversaire est en garde : inutile de gaspiller une grosse attaque
-    if (lui.protege) {
-      if (moi.stamina < moi.stats.staminaMax * 0.6) return 'reposer';
-      const rapide = attaques.find((a) => a.id === 'rapide');
-      if (rapide) return 'rapide';
+  // Exécuter la réponse choisie
+  if (cerveau.reponse && cerveau.attaqueVue && moi.etat === 'libre') {
+    if (cerveau.reponse === 'esquive') {
+      // Esquive à travers ou loin de l'adversaire… mais jamais vers le vide
+      let sens = versLui < 0 ? 1 : alea() < 0.5 ? -1 : 1;
+      const sure = (s) => !vide(terrain, moi.x + s * 185, moi.y);
+      if (!sure(sens)) sens = -sens;
+      if (sure(sens)) {
+        e.g = sens < 0;
+        e.d = sens > 0;
+        e.esquive = true;
+        cerveau.reponse = 'rien';
+        cerveau.tenues = { g: false, d: false, b: false, p: false };
+        return e;
+      }
+      cerveau.reponse = 'parade';
     }
-    // Gros coup adverse en préparation et nous déjà amochés : se protéger d'abord
-    if (menace >= pvEffectifs * 0.45 && ok('proteger') && moi.derniere !== 'proteger' && alea() < 0.5) return 'proteger';
-    // Meilleure attaque « rentable » : la puissante seulement si elle vaut vraiment le coup
-    attaques.sort((a, b) => b.espere - a.espere);
-    let choix = attaques[0];
-    const normale = attaques.find((a) => a.id === 'normale');
-    if (choix.id === 'puissante' && normale && choix.espere < normale.espere * 1.15) choix = normale;
-    // Garder de quoi frapper au tour suivant
-    if (moi.stamina - choix.cout + regenParTour() < coutAction('rapide', moi.stats) && attaques.length > 1) {
-      choix = attaques.find((a) => a.id === 'rapide') || choix;
+    if (cerveau.reponse === 'parade' || cerveau.reponse === 'parfaite') {
+      const a = cerveau.attaqueVue;
+      const reste = dureePhase(a.type, 'preparation', lui.stats) - a.t;
+      // Parade parfaite : lever la garde au tout dernier moment
+      const lever = cerveau.reponse === 'parade' || reste <= T.parade.fenetreParfaite * 0.7;
+      relacher();
+      e.p = lever;
+      // Se tourner vers l'attaquant pour parer de face
+      if (moi.dir !== versLui) { if (versLui > 0) e.d = true; else e.g = true; }
+      cerveau.tenues = { ...cerveau.tenues, g: e.g, d: e.d, p: e.p, b: false };
+      return e;
     }
-    return choix.id;
+  }
+  // Garder la parade tant que le coup adverse n'est pas fini
+  if ((cerveau.reponse === 'parade' || cerveau.reponse === 'parfaite') && lui.etat === 'attaque') {
+    e.p = true;
+    return e;
+  }
+  e.p = false;
+  cerveau.tenues.p = false;
+
+  // --- 2. Hésitations (surtout en Facile) ----------------------------------
+  cerveau.pause -= dt;
+  if (cerveau.pause > 0) {
+    relacher();
+    securiser(terrain, moi, lui, e, false);   // même distrait, il ne glisse pas dans le vide
+    cerveau.tenues = { g: e.g, d: e.d, b: false, p: false };
+    return e;
   }
 
-  // 4. À portée mais à court de stamina
-  if (aPortee(moi.stats.arme, d)) {
-    if (aPortee(lui.stats.arme, d) && ok('proteger')) return 'proteger';
-    if (ok('provoquer') && lui.stamina >= 15 && moi.stamina >= possibles.provoquer.cout + 5) return 'provoquer';
-    return 'reposer';
+  // --- 3. Décisions régulières ----------------------------------------------
+  cerveau.prochaineDecision -= dt;
+  if (cerveau.prochaineDecision <= 0) {
+    cerveau.prochaineDecision = d.reaction * (0.6 + alea() * 0.8);
+    if (alea() < d.hesitation) {
+      cerveau.pause = 0.2 + alea() * 0.5;
+      relacher();
+      cerveau.tenues = { g: false, d: false, b: false, p: false };
+      return e;
+    }
+    const fatigue = moi.stamina < moi.stats.staminaMax * 0.25;
+    cerveau.envie = fatigue && adx < 300 ? 'reculer' : alea() < d.agressivite ? 'approcher' : 'attendre';
   }
 
-  // 5. Hors de portée
-  if (ok('charger') && moi.stamina - possibles.charger.cout >= coutAction('rapide', moi.stats)) return 'charger';
-  // Ne pas entrer au contact sans frapper : l'adversaire frapperait le premier
-  const apresPas = d - 1;
-  const onSeraitAPortee = aPortee(moi.stats.arme, apresPas);
-  const ilFrapperait = menaceAdverse(moi, lui, apresPas, false) > 0;
-  if (!onSeraitAPortee && ilFrapperait && etat.manche < 12 && moi.stamina < moi.stats.staminaMax) {
-    if (ok('provoquer') && lui.stamina >= 15 && alea() < 0.4) return 'provoquer';
-    return 'reposer';
+  // --- 4. Attaquer si c'est possible ----------------------------------------
+  const memeHauteur = Math.abs(dy) < 90;
+  const vulnerable = lui.etat === 'etourdi' || (lui.etat === 'attaque' && lui.attaque.phase === 'recuperation');
+  const peutLourde = moi.recharges.lourde <= 0 && moi.stamina >= moi.stats.tr.coutLourde;
+  // Pas d'attaque en l'air près du vide : on ne pourrait plus se diriger en retombant
+  const enLAirPresDuVide = !moi.auSol
+    && (vide(terrain, moi.x, moi.y) || distanceDuVide(terrain, moi, Math.sign(moi.vx) || moi.dir, 120) < Infinity);
+  if (moi.etat === 'libre' && memeHauteur && !enLAirPresDuVide) {
+    // L'adversaire a le vide dans le dos : une attaque lourde peut l'y envoyer
+    const videDerriere = distanceDuVide(terrain, lui, versLui, 200) < Infinity;
+    // La fente de l'attaque lourde fait glisser (surtout sur la glace) : pas vers le vide
+    const glissade = moi.sur < 0 && surGlace(terrain, moi.x) ? 110 : 25;
+    const fenteSure = moi.auSol && distanceDuVide(terrain, moi, versLui, glissade) === Infinity;
+    const aPorteeLourde = adx <= portee(moi, 'lourde') && peutLourde && fenteSure;
+    const aPorteeLegere = adx <= portee(moi, 'legere') && moi.recharges.legere <= 0;
+    const envieLourde = vulnerable ? d.lourde * 3 : d.lourde * (videDerriere ? 0.5 : 0.08);
+    if (aPorteeLourde && alea() < envieLourde) {
+      if (moi.dir !== versLui) { relacher(); if (versLui > 0) e.d = true; else e.g = true; }
+      e.lourde = true;
+      return e;
+    }
+    if (aPorteeLegere && (vulnerable || alea() < d.agressivite * 0.25)) {
+      if (moi.dir !== versLui) { relacher(); if (versLui > 0) e.d = true; else e.g = true; }
+      e.legere = true;
+      return e;
+    }
   }
-  // Recharger avant d'engager le combat
-  if (moi.stamina < moi.stats.staminaMax * 0.5 && !aPortee(lui.stats.arme, d)) return 'reposer';
-  if (ok('avancer')) return 'avancer';
-  return 'reposer';
-}
 
-// ----------------------------------------------------------------------------
-//  Choix de l'action
-// ----------------------------------------------------------------------------
-export function choisirAction(etat, i, alea = Math.random, difficulte = 'normal') {
-  const d = reglages(difficulte);
-  const possibles = actionsPossibles(etat, i);
-  const jouables = Object.keys(possibles).filter((id) => possibles[id].possible);
-
-  // Une part de hasard (surtout en Facile) : le bot « se trompe »
-  if (alea() < d.hasard && jouables.length) {
-    const sansRecul = jouables.filter((id) => id !== 'reculer');
-    return auHasard(sansRecul.length ? sansRecul : jouables, alea);
+  // --- 5. Se déplacer ------------------------------------------------------
+  relacher();
+  const loin = adx > portee(moi, 'legere') - 10;
+  if (cerveau.envie === 'reculer') {
+    if (versLui > 0) e.g = true; else e.d = true;
+  } else if (cerveau.envie === 'approcher' && loin) {
+    if (versLui > 0) e.d = true; else e.g = true;
+  } else if (moi.dir !== versLui) {
+    if (versLui > 0) e.d = true; else e.g = true;   // au moins lui faire face
   }
-  if (d.tactique === 'avancee') return tactiqueAvancee(etat, i, alea);
-  return tactiqueSimple(etat, i, alea, difficulte !== 'facile');
+  securiser(terrain, moi, lui, e, cerveau.envie === 'approcher');
+
+  // Suivre l'adversaire en hauteur : sauter vers une plateforme, ou en descendre
+  // (jamais à travers une plateforme qui surplombe le vide)
+  if (dy > 80 && adx < 260 && moi.etat === 'libre') {
+    if (moi.auSol) e.saut = true;
+    else if (moi.vy < 0 && moi.sauts > 0) e.saut = true;
+  } else if (dy < -80 && moi.sur >= 0 && adx < 400 && !vide(terrain, moi.x, moi.y - 1)) {
+    e.b = true;
+  }
+
+  cerveau.tenues = { g: e.g, d: e.d, b: e.b, p: false };
+  return e;
 }

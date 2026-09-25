@@ -50,9 +50,13 @@ export function surReseau(evenement, fn) {
   auditeurs.get(evenement).push(fn);
 }
 
+// Outil de test : ?latence=120 dans l'adresse simule un réseau lent (120 ms aller-retour)
+const LATENCE = Math.min(1000, Math.max(0, Number(new URLSearchParams(location.search).get('latence')) || 0));
+const retarder = (fn) => (LATENCE ? setTimeout(fn, LATENCE / 2) : fn());
+
 export function envoyer(evenement, donnees = {}) {
   if (!socket || !socket.connected) return false;
-  socket.emit(evenement, donnees);
+  retarder(() => socket.emit(evenement, donnees));
   return true;
 }
 
@@ -96,7 +100,7 @@ if (socket) {
     prevenir('lobby:update', etatReseau.joueurs);
   });
   for (const ev of ['challenge:incoming', 'challenge:result', 'match:start', 'match:state', 'match:error', 'match:end', 'session:remplacee']) {
-    socket.on(ev, (d) => prevenir(ev, d));
+    socket.on(ev, (d) => retarder(() => prevenir(ev, d)));
   }
 }
 

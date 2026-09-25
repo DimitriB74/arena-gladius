@@ -1,7 +1,7 @@
 {
   "name": "arena-gladius",
   "version": "1.0.0",
-  "description": "ARENA GLADIUS — combats de gladiateurs 1v1 au tour par tour, jouables dans le navigateur",
+  "description": "ARENA GLADIUS — combats de gladiateurs 1v1 en temps réel, jouables dans le navigateur",
   "type": "module",
   "main": "server/index.js",
   "scripts": {

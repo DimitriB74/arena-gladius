@@ -9,7 +9,9 @@
 // ============================================================================
 
 import { ARMES, ARMURES, AMELIORATION, ORDRE_ATTRIBUTS, CREATION } from './data.js';
-import { coutAmelioration, prixRevente, calculerRecompense } from './formulas.js';
+import {
+  coutAmelioration, prixRevente, calculerRecompense, pointsInvestis, coutReinitialisation,
+} from './formulas.js';
 
 const copie = (p) => JSON.parse(JSON.stringify(p));
 const echec = (erreur) => ({ ok: false, erreur });
@@ -104,6 +106,22 @@ export function repartirPoints(perso, ajouts) {
   for (const [attr, n] of Object.entries(ajouts)) p.attributs[attr] += n;
   p.pointsLibres -= total;
   return { ok: true, perso: p };
+}
+
+/**
+ * Rend tous les points placés dans les attributs (chaque attribut revient à
+ * sa valeur de départ) contre des crédits. Les points redeviennent libres.
+ */
+export function reinitialiserPoints(perso) {
+  const n = pointsInvestis(perso.attributs);
+  if (n <= 0) return echec('Aucun point à réinitialiser.');
+  const cout = coutReinitialisation(perso.attributs);
+  if (perso.credits < cout) return echec(`Il faut ${cout} crédits pour réinitialiser tes points.`);
+  const p = copie(perso);
+  for (const a of ORDRE_ATTRIBUTS) p.attributs[a] = CREATION.valeurDepart;
+  p.pointsLibres += n;
+  p.credits -= cout;
+  return { ok: true, perso: p, cout, points: n };
 }
 
 /**

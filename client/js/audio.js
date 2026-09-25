@@ -2,7 +2,8 @@
 //  ARENA GLADIUS — client/js/audio.js
 //  Petits effets sonores synthétisés avec Web Audio (aucun fichier externe).
 //  jouerSon('coup' | 'critique' | 'rate' | 'bouclier' | 'pas' | 'repos' |
-//           'piece' | 'clic' | 'victoire' | 'defaite' | 'foule' | 'tic' | 'defi' | 'gong')
+//           'piece' | 'clic' | 'victoire' | 'defaite' | 'foule' | 'tic' | 'defi' | 'gong' |
+//           'chute' | 'lave')
 // ============================================================================
 
 const CLE_VOLUME = 'arena-gladius:volume-effets';
@@ -144,6 +145,17 @@ const SONS = {
   },
   defaite: (c) => {
     [392, 330, 262].forEach((f, i) => note(c, { freq: f, fin: f * 0.97, duree: 0.45, type: 'triangle', volume: 0.13, depart: i * 0.25 }));
+  },
+  // Chute dans un gouffre : sifflement qui descend, puis un choc sourd au loin
+  chute: (c) => {
+    note(c, { freq: 1100, fin: 140, duree: 0.9, type: 'sine', volume: 0.12 });
+    bruit(c, { duree: 0.5, volume: 0.3, freq: 300, fin: 60, depart: 0.85 });
+  },
+  // Plongeon dans la lave : sifflement puis grésillement
+  lave: (c) => {
+    note(c, { freq: 900, fin: 180, duree: 0.6, type: 'sine', volume: 0.1 });
+    bruit(c, { duree: 1.1, volume: 0.28, filtre: 'highpass', freq: 2500, fin: 5000, depart: 0.5, attaque: 0.05 });
+    bruit(c, { duree: 0.6, volume: 0.25, freq: 250, fin: 80, depart: 0.5 });
   },
 };
 

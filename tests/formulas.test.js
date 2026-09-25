@@ -7,9 +7,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ARMES, ARMURES, CREATION } from '../shared/data.js';
 import {
-  statsCombattant, tirerAttaque, degatsEstimes, reductionArmure, appliquerDegats, coutAction,
-  totalInvesti, prixRevente, coutAmelioration, chanceToucher, calculerRecompense, niveauPersonnage,
-  premierJoueur,
+  statsCombattant, degatsCoup, reductionArmure, dureePhase,
+  totalInvesti, prixRevente, coutAmelioration, calculerRecompense, niveauPersonnage,
 } from '../shared/formulas.js';
 import { nouveauPersonnage, validerPersonnage, attributsDeBase } from '../shared/validation.js';
 
@@ -33,47 +32,50 @@ test('améliorations : +12 % par niveau et coût croissant', () => {
   assert.equal(prixRevente({ id: 'dague', niveau: 0, offert: true }), 0);
 });
 
-test('(B) l’armure en % garde l’intérêt de l’attaque rapide', () => {
+test('(B) l’armure en % : l’attaque légère garde de l’intérêt même contre une armure lourde', () => {
   const att = statsCombattant(perso({ ...ATTR, force: 5 }, { arme: { id: 'hache', niveau: 0 } }));
   const def = statsCombattant(perso({ ...ATTR, defense: 6 }, {
     casque: { id: 'casque_acier', niveau: 0 }, plastron: { id: 'plastron_acier', niveau: 0 },
     jambieres: { id: 'jambieres_fer', niveau: 0 },
   }));
-  const rapide = degatsEstimes('rapide', att, def), puissante = degatsEstimes('puissante', att, def);
-  assert.ok(rapide >= 5, `attaque rapide trop faible : ${rapide}`);
-  assert.ok(puissante / rapide < 3.5, 'écart rapide / puissante trop grand');
+  const legere = degatsCoup('legere', att, def), lourde = degatsCoup('lourde', att, def);
+  assert.ok(legere >= 2, `attaque légère trop faible : ${legere}`);
+  assert.ok(lourde / legere < 4.5, 'écart légère / lourde trop grand');
   assert.ok(reductionArmure(def) <= 0.75);
 });
 
-test('les dégâts touchent le bouclier puis les PV', () => {
-  assert.deepEqual(appliquerDegats(10, 4, 50), { bouclier: 0, pv: 44, absorbe: 4 });
-  assert.deepEqual(appliquerDegats(3, 4, 50), { bouclier: 1, pv: 50, absorbe: 3 });
-});
-
-test('précision bornée entre 10 et 95 %', () => {
-  const fort = statsCombattant(perso({ ...ATTR, agilite: 40 }, { arme: { id: 'dague' } }));
-  const faible = statsCombattant(perso({ ...ATTR, agilite: 1 }, { arme: { id: 'hache' } }));
-  assert.equal(chanceToucher('rapide', fort, faible), 95);
-  assert.equal(chanceToucher('puissante', faible, fort), 10);
-});
-
-test('tirage d’attaque déterministe avec un aléa fixé', () => {
+test('dégâts : hasard ±10 % et critique ×1,5', () => {
   const a = statsCombattant(perso(ATTR, { arme: { id: 'glaive' } }));
-  const rate = tirerAttaque('normale', a, a, { alea: () => 0.99 });
-  assert.equal(rate.touche, false);
-  const touche = tirerAttaque('normale', a, a, { alea: () => 0.0 });
-  assert.equal(touche.touche, true);
-  assert.equal(touche.critique, true);
+  const bas = degatsCoup('lourde', a, a, { alea: () => 0 });
+  const haut = degatsCoup('lourde', a, a, { alea: () => 0.999 });
+  const crit = degatsCoup('lourde', a, a, { critique: true });
+  const normal = degatsCoup('lourde', a, a);
+  assert.ok(bas <= normal && normal <= haut);
+  assert.ok(crit > normal);
 });
 
-test('(D) la Vitesse réduit le coût des déplacements, le marteau alourdit les attaques', () => {
+test('temps réel : la Vitesse fait courir et sauter, l’Agilité et l’arme accélèrent les coups', () => {
   const lent = statsCombattant(perso({ ...ATTR, vitesse: 1 }));
-  const rapide = statsCombattant(perso({ ...ATTR, vitesse: 7 }));
-  assert.equal(coutAction('avancer', lent), 3);
-  assert.ok(coutAction('avancer', rapide) < 3);
-  assert.ok(coutAction('charger', rapide) < coutAction('charger', lent));
-  const marteau = statsCombattant(perso(ATTR, { arme: { id: 'marteau' } }));
-  assert.equal(coutAction('normale', marteau), 15);
+  const rapide = statsCombattant(perso({ ...ATTR, vitesse: 40 }));
+  assert.ok(rapide.tr.vitesse > lent.tr.vitesse);
+  assert.ok(rapide.tr.impulsionSaut > lent.tr.impulsionSaut);
+  const maladroit = statsCombattant(perso({ ...ATTR, agilite: 1 }, { arme: { id: 'marteau' } }));
+  const vif = statsCombattant(perso({ ...ATTR, agilite: 30 }, { arme: { id: 'dague' } }));
+  assert.ok(vif.tr.cadence > maladroit.tr.cadence);
+  assert.ok(dureePhase('legere', 'preparation', vif) < dureePhase('legere', 'preparation', maladroit));
+  assert.equal(maladroit.tr.coutLourde, Math.round(22 * 1.5), 'le marteau rend l’attaque lourde plus coûteuse');
+  const lance = statsCombattant(perso(ATTR, { arme: { id: 'lance' } }));
+  assert.ok(lance.tr.allonge > lent.tr.allonge, 'la lance frappe de plus loin');
+});
+
+test('temps réel : Endurance → stamina qui remonte plus vite, Défense et bouclier → garde', () => {
+  const mou = statsCombattant(perso({ ...ATTR, endurance: 1 }));
+  const endurant = statsCombattant(perso({ ...ATTR, endurance: 20 }));
+  assert.ok(endurant.tr.regenStamina > mou.tr.regenStamina);
+  assert.ok(endurant.staminaMax > mou.staminaMax);
+  const nu = statsCombattant(perso(ATTR));
+  const garde = statsCombattant(perso({ ...ATTR, defense: 10 }, { bouclier: { id: 'bouclier_fer', niveau: 2 } }));
+  assert.ok(garde.tr.gardeMax > nu.tr.gardeMax);
 });
 
 test('récompenses et niveau', () => {
@@ -85,11 +87,6 @@ test('récompenses et niveau', () => {
   assert.equal(niveauPersonnage(7), 3);
 });
 
-test('premier joueur : la Vitesse décide', () => {
-  const a = { attributs: { vitesse: 3 } }, b = { attributs: { vitesse: 5 } };
-  assert.equal(premierJoueur(a, b), 1);
-  assert.equal(premierJoueur(a, a, () => 0.1), 0);
-});
 
 // ----------------------------------------------------------------------------
 //  Validation du personnage
@@ -134,7 +131,7 @@ test('la validation détecte les sauvegardes incohérentes', () => {
 test('toutes les armures et armes sont complètes', () => {
   assert.equal(Object.keys(ARMURES).length, 16);
   for (const a of Object.values(ARMES)) {
-    for (const champ of ['degats', 'precision', 'porteeMin', 'porteeMax', 'ignoreArmure', 'coutStamina', 'prix']) {
+    for (const champ of ['degats', 'cadence', 'allonge', 'ignoreArmure', 'coutStamina', 'prix']) {
       assert.equal(typeof a[champ], 'number', `${a.nom}.${champ}`);
     }
   }

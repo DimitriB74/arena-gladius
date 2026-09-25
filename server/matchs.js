@@ -1,18 +1,30 @@
 // ============================================================================
 //  ARENA GLADIUS — server/matchs.js
 //
-//  Un Match relie le moteur de combat (combat.js) au réseau :
-//  - envoie l'état complet après chaque action (match:state)
-//  - minuteur de 20 s par tour : à expiration, « Se reposer » est joué
-//  - fait jouer l'IA (entraînement)
-//  - gère les déconnexions : 30 s pour revenir, sinon défaite
-//  - calcule les récompenses à la fin (match:end)
+//  Un Match fait tourner un combat EN TEMPS RÉEL sur le serveur :
+//  - simulation à 60 pas par seconde (shared/combat.js), le serveur fait autorité
+//  - les navigateurs envoient seulement leurs touches (match:entrees), numérotées
+//  - l'état est renvoyé 30 fois par seconde (match:state), avec le numéro de la
+//    dernière entrée traitée : le navigateur s'en sert pour corriger sa prédiction
+//  - les bots appuient sur leurs touches à chaque pas (server/ai.js)
+//  - déconnexion : combat en pause, 30 s pour revenir, sinon défaite
+//  - récompenses calculées à la fin (match:end)
 // ============================================================================
 
-import { COMBAT, IA } from '../shared/data.js';
+import { COMBAT, TEMPS_REEL as T } from '../shared/data.js';
 import { calculerRecompense } from '../shared/formulas.js';
-import { creerCombat, jouerAction, abandonner, vuePublique } from './combat.js';
-import { choisirAction } from './ai.js';
+import { creerMatch, etapeMatch, abandonner, dynamique, presentation } from '../shared/combat.js';
+import { creerCerveau, entreeBot } from './ai.js';
+
+const DT = 1 / T.frequence;
+const PAS_PAR_ENVOI = Math.max(1, Math.round(T.frequence / T.envoisParSeconde));
+const FILE_MAX = 6;             // au-delà, on rattrape le retard d'un navigateur
+const ENTREES_PAR_MESSAGE = 12; // garde-fou contre les messages trop gros
+const DUREE_APRES_KO = 1.6;     // on laisse la chute se jouer avant les résultats
+const TOUCHES_TENUES = ['g', 'd', 'b', 'p'];
+const TOUCHES_PRESSEES = ['saut', 'legere', 'lourde', 'esquive'];
+
+const entreeRelachee = () => ({ g: false, d: false, b: false, p: false, saut: false, legere: false, lourde: false, esquive: false });
 
 export class Match {
   /**
@@ -29,16 +41,23 @@ export class Match {
       joueur: p.joueur || null,
       ia: !!p.ia,
       perso: p.ia ? p.perso : p.joueur.perso,
+      cerveau: p.ia ? creerCerveau(difficulte) : null,
       deconnecte: false,
       finAttente: null,
+      file: [],                 // entrées reçues, pas encore jouées
+      tenues: entreeRelachee(), // dernières touches tenues connues
+      ack: 0,                   // numéro de la dernière entrée jouée
+      dernierRecu: 0,
     }));
     this.surResultat = surResultat;
     this.surFin = surFin;
-    this.etat = creerCombat(this.places.map((p) => p.perso), { arene, ia: this.places.map((p) => p.ia) });
-    this.minuteurTour = null;
-    this.finTour = null;
-    this.tempsRestantPause = null;
-    this.minuteurIA = null;
+    this.etat = creerMatch(this.places.map((p) => p.perso), { arene, ia: this.places.map((p) => p.ia) });
+    this.boucle = null;
+    this.derniere = 0;
+    this.accumulateur = 0;
+    this.pasDepuisEnvoi = 0;
+    this.pause = false;
+    this.apresFin = 0;
     this.minuteursAttente = [null, null];
     this.termine = false;
   }
@@ -50,120 +69,126 @@ export class Match {
     return this.places.findIndex((p) => p.joueur === joueur);
   }
 
-  tempsRestant() {
-    if (this.tempsRestantPause != null) return this.tempsRestantPause;
-    return this.finTour ? Math.max(0, this.finTour - Date.now()) : null;
-  }
-
   infosAttente() {
     const i = this.places.findIndex((p) => p.deconnecte);
     if (i < 0) return null;
     return { index: i, tempsRestant: Math.max(0, this.places[i].finAttente - Date.now()) };
   }
 
-  paquetEtat(evenement = null) {
+  paquetEtat(i, evenements = []) {
+    const e = this.etat;
     return {
       idMatch: this.id,
-      etat: vuePublique(this.etat),
-      evenement,
-      tempsRestant: this.tempsRestant(),
+      n: e.numero,
+      phase: e.phase,
+      decompte: Math.round(e.decompte * 100) / 100,
+      tempsRestant: Math.round(e.tempsRestant * 100) / 100,
+      ack: this.places[i]?.ack || 0,
+      c: e.combattants.map(dynamique),
+      ev: evenements,
+      pause: this.pause,
       attente: this.infosAttente(),
+      fini: e.fini,
+      vainqueur: e.vainqueur,
+      raison: e.raison,
     };
   }
 
-  envoyerDemarrage(place, index) {
+  envoyerDepart(place, i) {
     place.joueur.socket?.emit('match:start', {
-      ...this.paquetEtat(), monIndex: index, mode: this.modeIA ? 'ia' : 'joueur', difficulte: this.difficulte,
+      idMatch: this.id,
+      monIndex: i,
+      mode: this.modeIA ? 'ia' : 'joueur',
+      difficulte: this.difficulte,
+      arene: this.etat.arene,
+      presentations: this.etat.combattants.map(presentation),
+      etat: this.paquetEtat(i),
     });
   }
 
-  diffuser(evenement = null) {
-    const paquet = this.paquetEtat(evenement);
-    for (const p of this.places) if (p.joueur && !p.deconnecte) p.joueur.socket?.emit('match:state', paquet);
+  diffuser() {
+    const evenements = this.etat.evenements.splice(0);
+    this.places.forEach((p, i) => {
+      if (p.joueur && !p.deconnecte) p.joueur.socket?.emit('match:state', this.paquetEtat(i, evenements));
+    });
+    this.pasDepuisEnvoi = 0;
   }
 
   // --------------------------------------------------------------------------
-  //  Déroulement
+  //  Boucle de simulation
   // --------------------------------------------------------------------------
   demarrer() {
     this.places.forEach((p, i) => {
       if (!p.joueur) return;
       p.joueur.statut = 'combat';
       p.joueur.match = this;
-      this.envoyerDemarrage(p, i);
+      this.envoyerDepart(p, i);
     });
-    // Petit délai pour laisser les navigateurs afficher l'arène
-    setTimeout(() => this.programmerTour(), 1500);
+    this.derniere = performance.now();
+    this.boucle = setInterval(() => this.tic(), 1000 / T.frequence);
   }
 
-  arreterMinuteurs() {
-    clearTimeout(this.minuteurTour);
-    clearTimeout(this.minuteurIA);
-    this.minuteurTour = null;
-    this.minuteurIA = null;
-  }
-
-  programmerTour(dureeMs = COMBAT.dureeTour * 1000) {
-    this.arreterMinuteurs();
-    if (this.termine || this.etat.fini) return;
-    const place = this.places[this.etat.tour];
-    if (place.ia) {
-      const [min, max] = IA.delaiReflexion;
-      const delai = (min + Math.random() * (max - min)) * 1000;
-      this.finTour = null;
-      this.minuteurIA = setTimeout(() => {
-        this.minuteurIA = null;
-        // L'IA attend si son adversaire humain est déconnecté (elle rejouera à son retour)
-        if (this.places.some((p) => p.deconnecte)) return;
-        this.appliquer(this.etat.tour, choisirAction(this.etat, this.etat.tour, Math.random, this.difficulte));
-      }, delai);
-      return;
+  tic() {
+    const maintenant = performance.now();
+    this.accumulateur += Math.min(0.1, (maintenant - this.derniere) / 1000);
+    this.derniere = maintenant;
+    while (this.accumulateur >= DT && !this.termine) {
+      this.accumulateur -= DT;
+      this.pas();
     }
-    if (place.deconnecte) {
-      // En pause : on reprendra quand il reviendra
-      this.tempsRestantPause = dureeMs;
-      this.finTour = null;
-      return;
-    }
-    this.tempsRestantPause = null;
-    this.finTour = Date.now() + dureeMs;
-    const index = this.etat.tour;
-    this.minuteurTour = setTimeout(() => this.appliquer(index, COMBAT.actionParDefaut, true), dureeMs);
   }
 
-  appliquer(index, actionId, auto = false) {
-    if (this.termine || this.etat.fini || this.etat.tour !== index) return { ok: false, erreur: 'Ce n’est pas ton tour.' };
-    const r = jouerAction(this.etat, index, actionId);
-    if (!r.ok) return r;
-    if (auto) r.evenement.auto = true;
+  /** Prochaine entrée d'un joueur humain (dans l'ordre où il les a envoyées) */
+  prochaineEntree(place) {
+    // Trop d'avance accumulée (réseau saccadé) : on fusionne pour rattraper
+    while (place.file.length > FILE_MAX) {
+      const retiree = place.file.shift();
+      for (const k of TOUCHES_PRESSEES) if (retiree[k]) place.file[0][k] = true;
+    }
+    const e = place.file.shift();
+    if (!e) return { ...place.tenues, saut: false, legere: false, lourde: false, esquive: false };
+    place.ack = e.s;
+    for (const k of TOUCHES_TENUES) place.tenues[k] = e[k];
+    return e;
+  }
+
+  pas() {
+    if (this.pause) return;
+    const entrees = this.places.map((p, i) => (p.ia ? entreeBot(p.cerveau, this.etat, i, DT) : this.prochaineEntree(p)));
+    etapeMatch(this.etat, entrees, DT);
+    this.pasDepuisEnvoi += 1;
+    if (this.etat.evenements.some((ev) => ev.type === 'fin')) this.diffuser();
+    else if (this.pasDepuisEnvoi >= PAS_PAR_ENVOI) this.diffuser();
     if (this.etat.fini) {
-      this.arreterMinuteurs();
-      this.finTour = null;
-      this.diffuser(r.evenement);
-      this.finir();
-    } else {
-      this.programmerTour();
-      this.diffuser(r.evenement);
+      this.apresFin += DT;
+      if (this.apresFin >= DUREE_APRES_KO) this.finir();
     }
-    return r;
   }
 
-  /** Action demandée par un navigateur */
-  action(joueur, actionId) {
+  // --------------------------------------------------------------------------
+  //  Ce qu'envoient les navigateurs
+  // --------------------------------------------------------------------------
+  /** Touches d'un joueur : { e: [{ s, g, d, b, p, saut, legere, lourde, esquive }, ...] } */
+  recevoirEntrees(joueur, lot) {
     const i = this.indexDe(joueur);
-    if (i < 0) return;
-    if (typeof actionId !== 'string') return;
-    const r = this.appliquer(i, actionId);
-    if (!r.ok) joueur.socket?.emit('match:error', { message: r.erreur });
+    if (i < 0 || this.termine || !lot || !Array.isArray(lot.e)) return;
+    const place = this.places[i];
+    for (const brute of lot.e.slice(0, ENTREES_PAR_MESSAGE)) {
+      const s = Number(brute?.s);
+      if (!Number.isInteger(s) || s <= place.dernierRecu) continue;
+      place.dernierRecu = s;
+      const e = { s };
+      for (const k of [...TOUCHES_TENUES, ...TOUCHES_PRESSEES]) e[k] = brute[k] === true || brute[k] === 1;
+      place.file.push(e);
+    }
   }
 
   abandon(joueur, raison = 'abandon') {
     const i = this.indexDe(joueur);
-    if (i < 0 || this.termine) return;
+    if (i < 0 || this.termine || this.etat.fini) return;
     abandonner(this.etat, i, raison);
-    this.arreterMinuteurs();
-    this.finTour = null;
-    this.diffuser({ type: 'fin', acteur: i, action: raison });
+    this.pause = false;
+    this.diffuser();
     this.finir();
   }
 
@@ -176,16 +201,12 @@ export class Match {
     const place = this.places[i];
     place.deconnecte = true;
     place.finAttente = Date.now() + COMBAT.delaiReconnexion * 1000;
-    // Si c'était son tour, on met le minuteur en pause
-    if (this.etat.tour === i && this.minuteurTour) {
-      this.tempsRestantPause = Math.max(3000, this.finTour - Date.now());
-      clearTimeout(this.minuteurTour);
-      this.minuteurTour = null;
-      this.finTour = null;
-    }
+    place.file = [];
+    place.tenues = entreeRelachee();
+    this.pause = true;
     clearTimeout(this.minuteursAttente[i]);
     this.minuteursAttente[i] = setTimeout(() => this.abandon(joueur, 'deconnexion'), COMBAT.delaiReconnexion * 1000);
-    this.diffuser({ type: 'attente', acteur: i });
+    this.diffuser();
   }
 
   reconnexion(joueur) {
@@ -194,12 +215,22 @@ export class Match {
     const place = this.places[i];
     place.deconnecte = false;
     place.finAttente = null;
+    place.file = [];
+    place.dernierRecu = 0;
+    place.ack = 0;
     clearTimeout(this.minuteursAttente[i]);
     this.minuteursAttente[i] = null;
-    this.envoyerDemarrage(place, i);
-    if (this.etat.tour === i && !this.minuteurTour) this.programmerTour(this.tempsRestantPause ?? COMBAT.dureeTour * 1000);
-    else if (this.places[this.etat.tour].ia && !this.minuteurIA) this.programmerTour();
-    this.diffuser({ type: 'retour', acteur: i });
+    if (!this.places.some((p) => p.deconnecte)) {
+      this.pause = false;
+      // Petit décompte avant de reprendre, pour que chacun se remette en place
+      if (this.etat.phase === 'combat') {
+        this.etat.phase = 'decompte';
+        this.etat.decompte = T.decompte;
+      }
+      this.derniere = performance.now();
+    }
+    this.envoyerDepart(place, i);
+    this.diffuser();
   }
 
   // --------------------------------------------------------------------------
@@ -208,7 +239,7 @@ export class Match {
   finir() {
     if (this.termine) return;
     this.termine = true;
-    this.arreterMinuteurs();
+    clearInterval(this.boucle);
     this.minuteursAttente.forEach(clearTimeout);
     const mode = this.modeIA ? 'ia' : 'joueur';
     this.places.forEach((p, i) => {
@@ -225,6 +256,7 @@ export class Match {
         ratioPv,
         raison: this.etat.raison,
         adversaire: this.etat.combattants[1 - i].nom,
+        adversaireId: this.places[1 - i].joueur?.id || null,   // pour proposer une revanche
         recompense: calculerRecompense(mode, victoire, ratioPv, this.difficulte),
         compteurs: c.compteurs,
       };

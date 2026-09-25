@@ -330,6 +330,39 @@ function calculerPose(pose, av, temps) {
     p.brasArme = -0.3; p.coudeArme = -1.4; p.angleArme = -1.8;
   } else if (pose === 'victoire') {
     p.brasArme = -2.2 + Math.sin(temps * 6) * 0.1; p.coudeArme = -0.3; p.angleArme = -1.6;
+  } else if (pose === 'course') {
+    // Course : grandes enjambées, buste penché vers l'avant
+    const s = Math.sin(av * Math.PI * 2);
+    p.jambeAvant = 0.75 * s; p.jambeArriere = -0.75 * s;
+    p.corpsY = -Math.abs(s) * 5;
+    p.inclinaison = 0.14;
+    p.brasArme = -0.6 - s * 0.35;
+  } else if (pose === 'saut') {
+    // Genoux repliés, arme levée
+    p.jambeAvant = 1.05; p.jambeArriere = 0.35;
+    p.brasArme = -1.7; p.coudeArme = -0.4; p.angleArme = -1.9;
+    p.mainBouclier = [24, -76];
+    p.corpsY = 0;
+  } else if (pose === 'chute') {
+    p.jambeAvant = 0.5; p.jambeArriere = -0.45;
+    p.brasArme = -1.25; p.coudeArme = -0.2; p.angleArme = -1.1;
+    p.corpsY = 0;
+  } else if (pose === 'esquive') {
+    // Plongeon vers l'avant, jambes tendues
+    p.inclinaison = 0.5;
+    p.jambeAvant = 0.85; p.jambeArriere = -0.95;
+    p.brasArme = -0.2; p.coudeArme = -0.2; p.angleArme = -0.3;
+    p.corpsY = 10;
+  } else if (pose === 'touche') {
+    // Coup reçu : buste rejeté en arrière
+    p.inclinaison = -0.32;
+    p.brasArme = 0.25; p.coudeArme = -0.3; p.angleArme = 0.4;
+    p.jambeAvant = 0.45; p.jambeArriere = -0.1;
+  } else if (pose === 'etourdi') {
+    // Sonné : il titube
+    p.inclinaison = Math.sin(temps * 7) * 0.16 - 0.08;
+    p.brasArme = 0.35; p.coudeArme = 0.1; p.angleArme = 0.9;
+    p.mainBouclier = [16, -56];
   }
   return p;
 }

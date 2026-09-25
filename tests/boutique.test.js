@@ -6,8 +6,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { nouveauPersonnage, validerPersonnage, attributsDeBase } from '../shared/validation.js';
 import {
-  acheter, devisAchat, ameliorer, vendre, repartirPoints, appliquerRecompense,
+  acheter, devisAchat, ameliorer, vendre, repartirPoints, appliquerRecompense, reinitialiserPoints,
 } from '../shared/boutique.js';
+import { coutReinitialisation, pointsInvestis } from '../shared/formulas.js';
 
 function perso() {
   const attributs = attributsDeBase();
@@ -94,4 +95,26 @@ test('un attribut ne dépasse jamais 100', () => {
   assert.ok(r.ok);
   assert.equal(r.perso.attributs.force, 100);
   assert.equal(repartirPoints(r.perso, { force: 1 }).ok, false);
+});
+
+test('réinitialisation des points : payante, proportionnelle, et la sauvegarde reste valide', () => {
+  let p = perso();                                   // 10 points placés, 100 crédits
+  assert.equal(pointsInvestis(p.attributs), 10);
+  assert.equal(coutReinitialisation(p.attributs), 50);
+  const r = reinitialiserPoints(p);
+  assert.ok(r.ok);
+  assert.equal(r.perso.credits, 50);
+  assert.equal(r.perso.pointsLibres, 10);
+  assert.ok(Object.values(r.perso.attributs).every((v) => v === 1));
+  assert.ok(validerPersonnage(r.perso).ok);
+  // Plus rien à rendre, puis pas assez de crédits
+  assert.equal(reinitialiserPoints(r.perso).ok, false);
+  p.credits = 10;
+  assert.equal(reinitialiserPoints(p).ok, false);
+  // Minimum de 25 crédits pour quelques points seulement
+  const petit = { force: 3, agilite: 1, defense: 1, vitalite: 1, endurance: 1, vitesse: 1 };
+  assert.equal(coutReinitialisation(petit), 25);
+  // Un vétéran paie plus cher
+  const veteran = { force: 30, agilite: 20, defense: 15, vitalite: 20, endurance: 10, vitesse: 11 };
+  assert.equal(coutReinitialisation(veteran), 500);
 });

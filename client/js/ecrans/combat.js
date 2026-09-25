@@ -1,54 +1,41 @@
 // ============================================================================
-//  ARENA GLADIUS — écran de combat
+//  ARENA GLADIUS — écran de combat (TEMPS RÉEL)
 //
-//  Le serveur fait autorité : ce module n'envoie que des intentions
-//  (« je veux attaquer ») et affiche les états reçus (match:state) en
-//  animant les événements un par un (déplacement, coup, raté...).
+//  Le serveur fait autorité : le navigateur envoie seulement ses touches
+//  (match:entrees) et affiche les états reçus (match:state). Pour que les
+//  commandes répondent immédiatement, ton gladiateur est anticipé localement
+//  (voir combat/session.js), l'adversaire est affiché de façon lissée.
 // ============================================================================
 
-import { ACTIONS, ORDRE_ACTIONS, COMBAT, ARENES, DIFFICULTES } from '/shared/data.js';
-import { chanceToucher, degatsEstimes, aPortee } from '/shared/formulas.js';
+import { TEMPS_REEL as T, ARENES, DIFFICULTES } from '/shared/data.js';
+import { terrainDe } from '/shared/terrain.js';
 import { $, echapper, notifier, prixHtml } from '../ui.js';
 import { allerA, ecranCourant } from '../navigation.js';
 import { envoyer, surReseau, etatReseau } from '../reseau.js';
 import { appliquerResultat } from '../recompenses.js';
+import { defier } from '../defis.js';
 import { jouerSon } from '../audio.js';
 import { jouerTheme } from '../musique.js';
 import { dessinerCombat } from '../rendu/combat.js';
 import { dessinerGladiateur } from '../rendu/gladiateur.js';
-
-const ICONES = {
-  avancer: '➜', reculer: '➜', charger: '⇶', rapide: '🗡️', normale: '⚔️', puissante: '💥',
-  proteger: '🛡️', reposer: '💤', provoquer: '😤',
-};
-const GROUPES = [
-  { titre: 'Déplacement', actions: ['avancer', 'reculer', 'charger'] },
-  { titre: 'Attaques', actions: ['rapide', 'normale', 'puissante'] },
-  { titre: 'Tactique', actions: ['proteger', 'reposer', 'provoquer'] },
-];
+import { SessionCombat } from '../combat/session.js';
+import { lireEntree, demarrerControles, arreterControles, AIDE_TOUCHES } from '../combat/controles.js';
 
 // ----------------------------------------------------------------------------
 //  État de l'écran
 // ----------------------------------------------------------------------------
-let idMatch = null;
-let monIndex = 0;
-let mode = 'joueur';
-let difficulte = null;
-let etat = null;            // dernier état appliqué
-let file = [];              // états reçus pas encore animés
-let anim = null;            // animation en cours
-let finTour = null;         // échéance locale du tour (ms)
-let attente = null;         // { index, fin } si quelqu'un est déconnecté
+let session = null;
 let resultat = null;        // reçu avec match:end
 let resultatAffiche = false;
-let dernierTic = null;
-let survolAction = null;
-const vis = { arene: 'colisee', combattants: [], textes: [], secousse: null, tour: 0, monIndex: 0, fini: false, surbrillance: null };
-
-const monTour = () => etat && !etat.fini && etat.tour === monIndex && !anim && file.length === 0 && !attente;
+let dernierT = null;
+let derniereMajHud = 0;
+let dernierDecompte = null;
+let finMessage = 0;          // heure à laquelle « Combat ! » disparaît
+let moiAvant = null;         // pour les petits sons de tes propres gestes
+const vis = { arene: 'colisee', combattants: [], monIndex: 0, textes: [], impacts: [], secousse: null };
 
 // ----------------------------------------------------------------------------
-//  Fiches des combattants (barres PV / stamina / bouclier)
+//  Fiches des combattants (PV, stamina, garde)
 // ----------------------------------------------------------------------------
 function dessinerPortrait(canvas, c) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -65,340 +52,218 @@ function dessinerPortrait(canvas, c) {
 }
 
 function construireFiches() {
-  etat.combattants.forEach((c, i) => {
+  const d = DIFFICULTES[session.difficulte] || DIFFICULTES.normal;
+  session.presentations.forEach((c, i) => {
     const fiche = $(`#fiche-${i}`);
     fiche.innerHTML = `
       <canvas class="portrait"></canvas>
       <div class="fiche-infos">
-        <div class="fiche-nom">${echapper(c.nom)} <small>Niv. ${c.niveau}${c.ia ? ` · Bot ${(DIFFICULTES[difficulte] || DIFFICULTES.normal).nom.toLowerCase()} ${(DIFFICULTES[difficulte] || DIFFICULTES.normal).icone}` : ''}</small>${i === monIndex ? '<em class="badge-toi">TOI</em>' : ''}</div>
+        <div class="fiche-nom">${echapper(c.nom)} <small>Niv. ${c.niveau}${c.ia ? ` · Bot ${d.nom.toLowerCase()} ${d.icone}` : ''}</small>${i === session.monIndex ? '<em class="badge-toi">TOI</em>' : ''}</div>
         <div class="barre pv" title="Points de vie"><i></i><span></span></div>
-        <div class="barre stamina" title="Stamina"><i></i><span></span></div>
-        <div class="barre bouclier" title="Bouclier"><i></i><span></span></div>
+        <div class="barre stamina" title="Stamina : esquives et attaques lourdes"><i></i><span></span></div>
+        <div class="barre garde" title="Garde : encaisse les coups quand tu pares"><i></i><span></span></div>
       </div>`;
     dessinerPortrait(fiche.querySelector('canvas'), c);
   });
 }
 
 function majBarre(el, valeur, max, prefixe) {
-  el.querySelector('i').style.width = `${max > 0 ? (valeur / max) * 100 : 0}%`;
-  el.querySelector('span').textContent = `${prefixe} ${Math.round(valeur)} / ${max}`;
+  el.querySelector('i').style.width = `${max > 0 ? Math.max(0, Math.min(1, valeur / max)) * 100 : 0}%`;
+  el.querySelector('span').textContent = `${prefixe} ${Math.max(0, Math.round(valeur))} / ${Math.round(max)}`;
 }
 
-function majFiches(e, avecTour = false) {
-  e.combattants.forEach((c, i) => {
+function majFiches() {
+  const combattants = [0, 1].map((i) => (i === session.monIndex ? session.moi : session.adversaireActuel()));
+  combattants.forEach((c, i) => {
     const fiche = $(`#fiche-${i}`);
+    if (!fiche.firstElementChild) return;
     majBarre(fiche.querySelector('.pv'), c.pv, c.stats.pvMax, '❤');
     majBarre(fiche.querySelector('.stamina'), c.stamina, c.stats.staminaMax, '⚡');
-    majBarre(fiche.querySelector('.bouclier'), c.bouclier, c.stats.bouclierMax, '◉');
-    if (avecTour) fiche.classList.toggle('actif', !e.fini && e.tour === i);
+    majBarre(fiche.querySelector('.garde'), c.garde, c.stats.tr.gardeMax, '🛡');
     fiche.classList.toggle('critique', c.pv > 0 && c.pv < c.stats.pvMax * 0.25);
+    fiche.classList.toggle('sonne', c.etat === 'etourdi' && c.sonne);
   });
 }
 
 // ----------------------------------------------------------------------------
-//  Barre d'actions
+//  Rappel des touches et recharges
 // ----------------------------------------------------------------------------
-function construireActions() {
-  $('#combat-actions').innerHTML = GROUPES.map((g) => `
-    <div class="groupe-actions">
-      <span class="titre-groupe">${g.titre}</span>
-      <div>${g.actions.map((id) => `
-        <button class="action" data-action="${id}">
-          <span class="action-icone">${ICONES[id]}</span>
-          <span class="action-nom">${ACTIONS[id].nom}</span>
-          <span class="action-cout">⚡<b></b></span>
-          <kbd>${ACTIONS[id].touche}</kbd>
-        </button>`).join('')}</div>
-    </div>`).join('');
+function construireCommandes() {
+  $('#combat-commandes').innerHTML = AIDE_TOUCHES.map((a) => `
+    <span class="commande"><kbd>${a.touches}</kbd>${a.alt ? `<small>${a.alt}</small>` : ''} ${a.action}</span>`).join('');
+  $('#combat-recharges').innerHTML = [
+    ['legere', '🗡️', 'Légère'],
+    ['lourde', '💥', 'Lourde'],
+    ['esquive', '💨', 'Esquive'],
+  ].map(([id, icone, nom]) => `<div class="recharge" data-recharge="${id}" title="${nom}"><i></i><span>${icone}</span><small>${nom}</small></div>`).join('');
 }
 
-function majActions() {
-  const possibles = etat?.possibles || {};
-  const actif = monTour();
-  document.querySelectorAll('#combat-actions .action').forEach((b) => {
-    const id = b.dataset.action;
-    const info = possibles[id];
-    b.disabled = !actif || !info?.possible;
-    b.querySelector('.action-cout b').textContent = info ? info.cout : ACTIONS[id].cout;
-  });
-  // Les flèches pointent vers l'adversaire (ou à l'opposé pour reculer)
-  const versDroite = monIndex === 0;
-  const av = document.querySelector('#combat-actions [data-action="avancer"] .action-icone');
-  const re = document.querySelector('#combat-actions [data-action="reculer"] .action-icone');
-  if (av) av.style.transform = versDroite ? 'none' : 'scaleX(-1)';
-  if (re) re.style.transform = versDroite ? 'scaleX(-1)' : 'none';
-  $('#combat-actions').classList.toggle('mon-tour', actif);
-}
-
-function texteInfobulle(id) {
-  const a = ACTIONS[id];
-  const info = etat?.possibles?.[id];
-  const moi = etat.combattants[monIndex], lui = etat.combattants[1 - monIndex];
-  let details = '';
-  if (a.type === 'attaque' || a.type === 'charge') {
-    const attaque = a.type === 'charge' ? a.attaque : id;
-    const chance = chanceToucher(attaque, moi.stats, lui.stats);
-    const degats = degatsEstimes(attaque, moi.stats, lui.stats, lui.protege);
-    details = `<p class="chiffres">🎯 ${chance} % de toucher · ⚔ ≈ ${degats} dégâts${lui.protege ? ' (garde adverse)' : ''}</p>`;
+function majRecharges() {
+  const c = session.moi;
+  const infos = {
+    legere: { reste: c.recharges.legere, total: 0.2, cout: 0 },
+    lourde: { reste: c.recharges.lourde, total: T.attaques.lourde.recharge / c.stats.tr.cadence, cout: c.stats.tr.coutLourde },
+    esquive: { reste: c.recharges.esquive, total: T.esquive.recharge, cout: T.esquive.cout },
+  };
+  for (const [id, v] of Object.entries(infos)) {
+    const el = document.querySelector(`[data-recharge="${id}"]`);
+    if (!el) continue;
+    const pret = v.reste <= 0 && c.stamina >= v.cout;
+    el.classList.toggle('pret', pret);
+    el.classList.toggle('fatigue', v.reste <= 0 && c.stamina < v.cout);
+    el.querySelector('i').style.height = `${v.reste > 0 ? Math.min(1, v.reste / Math.max(0.01, v.total)) * 100 : 0}%`;
   }
-  const raison = info && !info.possible && etat.tour === monIndex ? `<p class="raison">⛔ ${echapper(info.raison)}</p>` : '';
-  return `<strong>${a.nom}</strong> <span class="cout">⚡ ${info ? info.cout : a.cout}</span>
-    <p>${echapper(a.description)}</p>${details}${raison}`;
-}
-
-function surbrillancePour(id) {
-  if (!etat || !id) return null;
-  const a = ACTIONS[id];
-  const moi = etat.combattants[monIndex];
-  if (a.type === 'attaque') {
-    const cases = [];
-    for (let c = 1; c <= COMBAT.nbCases; c++) if (aPortee(moi.stats.arme, Math.abs(c - moi.position))) cases.push(c);
-    return { cases, couleur: 'rgba(200,40,30,0.35)' };
-  }
-  if (a.type === 'deplacement') {
-    const sens = Math.sign(etat.combattants[1 - monIndex].position - moi.position) * a.pas;
-    return { cases: [moi.position + sens], couleur: 'rgba(242,182,50,0.55)' };
-  }
-  return null;
-}
-
-function jouer(id) {
-  if (!monTour()) return;
-  const info = etat.possibles?.[id];
-  if (!info?.possible) {
-    if (info?.raison) notifier(info.raison, 'erreur');
-    return;
-  }
-  jouerSon('clic');
-  envoyer('match:action', { action: id });
-  // On bloque les boutons en attendant la réponse du serveur
-  document.querySelectorAll('#combat-actions .action').forEach((b) => { b.disabled = true; });
-  $('#combat-actions').classList.remove('mon-tour');
 }
 
 // ----------------------------------------------------------------------------
-//  Journal et bandeau de tour
+//  Chrono, décompte, pause
 // ----------------------------------------------------------------------------
-function majJournal(e) {
-  const j = $('#combat-journal');
-  j.innerHTML = e.journal.slice(-14).map((l) => {
-    const camp = l.acteur == null ? '' : l.acteur === monIndex ? 'moi' : 'lui';
-    return `<p class="${l.type} ${camp}">${echapper(l.texte)}</p>`;
-  }).join('');
-  j.scrollTop = j.scrollHeight;
-}
+function majCentre() {
+  const e = session.dernier;
+  const s = Math.ceil(e.tempsRestant);
+  const chrono = $('#combat-chrono');
+  chrono.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  chrono.classList.toggle('urgent', e.phase === 'combat' && s <= 15);
 
-function majBandeau() {
-  const b = $('#combat-tour');
-  if (!etat) return;
-  if (etat.fini) {
-    b.textContent = etat.vainqueur === monIndex ? 'Victoire !' : 'Défaite…';
-    b.className = 'bandeau-tour fin';
-  } else if (attente) {
-    b.textContent = 'En attente…';
-    b.className = 'bandeau-tour';
-  } else if (etat.tour === monIndex) {
-    b.textContent = 'À toi de jouer !';
-    b.className = 'bandeau-tour moi';
+  // Décompte « 3, 2, 1 » puis « Combat ! » pendant un instant
+  const d = $('#combat-decompte');
+  const afficher = (texteDecompte) => {
+    d.textContent = texteDecompte;
+    d.hidden = false;
+    d.classList.remove('anime'); void d.offsetWidth; d.classList.add('anime');
+  };
+  if (e.phase === 'decompte' && !e.pause) {
+    const n = Math.max(1, Math.ceil(e.decompte));
+    if (n !== dernierDecompte) { dernierDecompte = n; afficher(n); jouerSon('tic'); }
+  } else if (e.phase === 'combat' && dernierDecompte !== null) {
+    dernierDecompte = null;
+    finMessage = performance.now() + 900;
+    afficher('Combat !');
+  } else if (e.pause || performance.now() > finMessage) {
+    d.hidden = true;
+  }
+
+  const bandeau = $('#combat-attente');
+  if (!etatReseau.connecte) {
+    bandeau.hidden = false;
+    bandeau.textContent = 'Connexion au serveur perdue… reconnexion en cours';
+  } else if (e.pause && e.attente) {
+    bandeau.hidden = false;
+    const nom = session.presentations[e.attente.index].nom;
+    const reste = Math.ceil(e.attente.tempsRestant / 1000);
+    bandeau.textContent = e.attente.index === session.monIndex
+      ? 'Reconnexion…'
+      : `${nom} s’est déconnecté. Combat en pause : victoire automatique dans ${reste} s s’il ne revient pas.`;
   } else {
-    b.textContent = `Tour de ${etat.combattants[etat.tour].nom}…`;
-    b.className = 'bandeau-tour';
+    bandeau.hidden = true;
   }
-  $('#combat-manche').textContent = `Manche ${etat.manche} / ${COMBAT.manchesMax}`;
-}
-
-function majAttente(a) {
-  attente = a ? { index: a.index, fin: performance.now() + a.tempsRestant } : null;
-  $('#combat-attente').hidden = !attente;
 }
 
 // ----------------------------------------------------------------------------
-//  Application des états et animations
+//  Événements envoyés par le serveur : textes, impacts, sons
 // ----------------------------------------------------------------------------
-function poseAuRepos(c, i, e) {
-  if (e.fini) return e.vainqueur === i ? 'victoire' : 'ko';
-  return c.protege ? 'protege' : 'repos';
+function texte(txt, x, y, couleur, taille = 30) {
+  vis.textes.push({ texte: txt, x, y, couleur, taille, debut: performance.now() });
 }
 
-function appliquerEtat(paquet) {
-  etat = paquet.etat;
-  vis.arene = etat.arene;
-  vis.tour = etat.tour;
-  vis.fini = etat.fini;
-  etat.combattants.forEach((c, i) => {
-    const v = vis.combattants[i];
-    v.x = c.position;
-    v.protege = c.protege;
-    v.pose = poseAuRepos(c, i, etat);
-    v.avancement = 0;
-    v.decalage = 0;
-  });
-  if (paquet.tempsRestant != null) finTour = performance.now() + paquet.tempsRestant;
-  else if (etat.fini) finTour = null;
-  majAttente(paquet.attente);
-  majFiches(etat, true);
-  majJournal(etat);
-  majBandeau();
-  majActions();
-  if (etat.tour === monIndex && !etat.fini && !attente) jouerSon('tic');
-  if (etat.fini) setTimeout(afficherResultat, 1400);
-}
-
-const DUREES = { deplacement: 450, charge: 1000, attaque: 750, protection: 600, repos: 650, provocation: 800 };
-
-function demarrerAnimation(paquet) {
-  const ev = paquet.evenement;
-  anim = { paquet, ev, debut: performance.now(), duree: DUREES[ev.type] || 500, impact: false };
-  majActions();
-  if (ev.type === 'deplacement' || ev.type === 'charge') jouerSon('pas');
-  if (ev.auto) ajouterTexte(ev.acteur, '⏳ Temps écoulé', '#f3e2bb', 22, 40);
-}
-
-function ajouterTexte(index, texte, couleur, taille = 30, dy = 0) {
-  const v = vis.combattants[index];
-  vis.textes.push({ texte, x: v.x, dy, couleur, taille, debut: performance.now() });
-}
-
-/** Moment de l'impact : chiffres, sons, secousse, barres mises à jour */
-function impact(anim) {
-  const { ev, paquet } = anim;
-  const cible = 1 - ev.acteur;
-  const vCible = vis.combattants[cible];
-  if (ev.type === 'attaque' || ev.type === 'charge') {
-    if (ev.touche) {
-      ajouterTexte(cible, `-${ev.degats}`, ev.critique ? '#ffcf3a' : '#ff5a4a', ev.critique ? 46 : 36);
-      if (ev.critique) ajouterTexte(cible, 'CRITIQUE !', '#ffcf3a', 26, 48);
-      if (ev.absorbe) ajouterTexte(cible, `◉ ${ev.absorbe} absorbés`, '#8fd0ff', 18, -34);
-      vCible.impact = { debut: performance.now(), couleur: ev.critique ? '#ffcf3a' : '#fff4d6' };
-      vis.secousse = { amplitude: ev.critique ? 14 : 6, debut: performance.now() };
-      jouerSon(ev.critique ? 'critique' : 'coup');
-      if (ev.ko) setTimeout(() => jouerSon('foule'), 250);
-    } else {
-      ajouterTexte(cible, 'Raté !', '#ffffff', 32);
-      vCible.esquive = performance.now();
-      jouerSon('rate');
-    }
-  } else if (ev.type === 'protection') {
-    ajouterTexte(ev.acteur, ev.bouclier ? `◉ +${ev.bouclier}` : 'En garde !', '#8fd0ff', 30);
-    jouerSon('bouclier');
-  } else if (ev.type === 'repos') {
-    ajouterTexte(ev.acteur, `⚡ +${ev.stamina}`, '#ffd766', 30);
-    jouerSon('repos');
-  } else if (ev.type === 'provocation') {
-    ajouterTexte(ev.acteur, 'Provocation !', '#f3e2bb', 24, 30);
-    ajouterTexte(cible, ev.reussi ? `⚡ -${ev.perte}` : 'Ignorée', ev.reussi ? '#ffd766' : '#dddddd', 28);
-  }
-  majFiches(paquet.etat);
-}
-
-/** Avance l'animation en cours (appelé à chaque image) */
-function animer() {
-  if (!anim) return;
-  const p = Math.min(1, (performance.now() - anim.debut) / anim.duree);
-  const { ev } = anim;
-  const v = vis.combattants[ev.acteur];
-
-  if (ev.type === 'deplacement') {
-    v.x = ev.de + (ev.vers - ev.de) * p;
-    v.pose = 'marche';
-    v.avancement = (p * 2) % 1;
-    if (p >= 0.5 && !anim.impact) { anim.impact = true; majFiches(anim.paquet.etat); }
-  } else if (ev.type === 'charge') {
-    const pm = Math.min(1, p / 0.35);
-    v.x = ev.de + (ev.vers - ev.de) * pm;
-    if (p < 0.35) { v.pose = 'marche'; v.avancement = (pm * 3) % 1; } else { v.pose = 'attaque'; v.avancement = (p - 0.35) / 0.65; }
-    if (p >= 0.75 && !anim.impact) { anim.impact = true; impact(anim); }
-  } else if (ev.type === 'attaque') {
-    v.pose = 'attaque';
-    v.avancement = p;
-    if (p >= 0.55 && !anim.impact) { anim.impact = true; impact(anim); }
-  } else if (ev.type === 'protection') {
-    v.pose = 'protege';
-    v.protege = p > 0.3;
-    if (p >= 0.3 && !anim.impact) { anim.impact = true; impact(anim); }
-  } else if (ev.type === 'repos') {
-    v.pose = 'repos';
-    if (p >= 0.2 && !anim.impact) { anim.impact = true; impact(anim); }
-  } else if (ev.type === 'provocation') {
-    v.pose = 'victoire';
-    if (p >= 0.3 && !anim.impact) { anim.impact = true; impact(anim); }
-  }
-
-  // Petit pas de côté quand on esquive
-  vis.combattants.forEach((c, i) => {
-    if (!c.esquive) return;
-    const pe = (performance.now() - c.esquive) / 400;
-    c.decalage = pe < 1 ? Math.sin(pe * Math.PI) * 0.25 * (i === 0 ? -1 : 1) : 0;
-    if (pe >= 1) c.esquive = null;
-  });
-
-  if (p >= 1) {
-    if (!anim.impact) impact(anim);
-    const paquet = anim.paquet;
-    anim = null;
-    appliquerEtat(paquet);
-    traiterSuivant();
-  }
-}
-
-function traiterSuivant() {
-  while (!anim && file.length) {
-    const paquet = file.shift();
-    const ev = paquet.evenement;
-    if (ev && DUREES[ev.type]) demarrerAnimation(paquet);
-    else {
-      if (ev?.type === 'attente') notifier(`${paquet.etat.combattants[ev.acteur].nom} s’est déconnecté…`, 'info');
-      if (ev?.type === 'retour') notifier(`${paquet.etat.combattants[ev.acteur].nom} est de retour !`, 'succes');
-      appliquerEtat(paquet);
+function traiterEvenements(evenements) {
+  const moi = session.monIndex;
+  for (const ev of evenements) {
+    switch (ev.type) {
+      case 'debut':
+        jouerSon('gong');
+        break;
+      case 'coup': {
+        const lourde = ev.attaque === 'lourde';
+        texte(`-${ev.degats}`, ev.x, ev.y + 40, ev.critique ? '#ffcf3a' : ev.cible === moi ? '#ff5a4a' : '#ffffff', ev.critique ? 44 : lourde ? 38 : 30);
+        if (ev.critique) texte('CRITIQUE !', ev.x, ev.y + 85, '#ffcf3a', 24);
+        vis.impacts.push({ x: ev.x, y: ev.y, couleur: ev.critique ? '#ffcf3a' : '#fff4d6', debut: performance.now() });
+        vis.secousse = { amplitude: (lourde ? 12 : 5) + (ev.critique ? 6 : 0), debut: performance.now() };
+        jouerSon(ev.critique ? 'critique' : 'coup');
+        break;
+      }
+      case 'bloque':
+        texte(ev.degats ? `Paré ! -${ev.degats}` : 'Paré !', ev.x, ev.y + 40, '#8fd0ff', 26);
+        vis.impacts.push({ x: ev.x, y: ev.y, couleur: '#bfe3ff', debut: performance.now() });
+        jouerSon('bouclier');
+        break;
+      case 'brise':
+        texte('Garde brisée !', ev.x, ev.y + 50, '#ff8a4a', 30);
+        vis.secousse = { amplitude: 10, debut: performance.now() };
+        jouerSon('critique');
+        break;
+      case 'parfaite':
+        texte('Parade parfaite !', ev.x, ev.y + 50, '#ffcf3a', 30);
+        vis.impacts.push({ x: ev.x, y: ev.y, couleur: '#ffe79a', debut: performance.now() });
+        jouerSon('bouclier');
+        setTimeout(() => jouerSon('piece'), 90);
+        break;
+      case 'esquive':
+        texte('Esquivé !', ev.x, ev.y + 40, '#ffffff', 26);
+        jouerSon('rate');
+        break;
+      case 'chute':
+        texte(CHUTES[ev.trou]?.cri || CHUTES.gouffre.cri, ev.x, 150, ev.trou === 'lave' ? '#ffb13a' : '#ff5a4a', 44);
+        vis.secousse = { amplitude: 14, debut: performance.now() };
+        jouerSon(ev.trou === 'lave' ? 'lave' : 'chute');
+        break;
+      case 'fin':
+        if (ev.raison === 'ko') texte('K.O. !', T.arene.largeur / 2, 330, '#ff5a4a', 64);
+        jouerSon('foule');
+        break;
+      default:
+        break;
     }
   }
 }
 
-function recevoirEtat(paquet) {
-  if (paquet.idMatch !== idMatch) return;
-  file.push(paquet);
-  if (document.hidden) toutAppliquer();
-  else traiterSuivant();
-}
-
-/**
- * Termine tout de suite les animations en attente. Utile quand l'onglet est
- * en arrière-plan : le navigateur n'y dessine plus rien, les animations
- * resteraient bloquées et le joueur ne pourrait plus jouer à son retour.
- */
-function toutAppliquer() {
-  if (anim) {
-    if (!anim.impact) majFiches(anim.paquet.etat);
-    file.unshift(anim.paquet);
-    anim = null;
+/** Petits sons de tes propres gestes, joués tout de suite (sans attendre le serveur) */
+function sonsLocaux(c) {
+  if (moiAvant) {
+    if (c.etat === 'attaque' && moiAvant.etat !== 'attaque') jouerSon('rate');
+    if (c.etat === 'esquive' && moiAvant.etat !== 'esquive') jouerSon('rate');
+    if (c.sauts < moiAvant.sauts && !c.auSol) jouerSon('pas');
+    if (c.auSol && !moiAvant.auSol) jouerSon('pas');
   }
-  const dernier = file.pop();
-  file = [];
-  vis.textes = [];
-  if (dernier) appliquerEtat(dernier);
+  moiAvant = { etat: c.etat, sauts: c.sauts, auSol: c.auSol };
 }
 
-document.addEventListener('visibilitychange', () => { if (document.hidden) toutAppliquer(); });
-// Filet de sécurité : si une animation dure anormalement longtemps, on la termine
-setInterval(() => {
-  if (anim && performance.now() - anim.debut > anim.duree + 1200) toutAppliquer();
-}, 400);
+// ----------------------------------------------------------------------------
+//  Réception des états du serveur
+// ----------------------------------------------------------------------------
+function recevoirEtat(etat) {
+  if (!session || etat.idMatch !== session.idMatch) return;
+  session.recevoir(etat);
+  if (etat.ev?.length) traiterEvenements(etat.ev);
+}
 
 // ----------------------------------------------------------------------------
 //  Fin du combat
 // ----------------------------------------------------------------------------
+// Tomber dans un trou : message selon le genre de trou
+const CHUTES = {
+  gouffre:  { cri: 'Chute mortelle !', gagne: 'Ton adversaire a disparu dans le gouffre !', perdu: 'Tu es tombé dans le gouffre…' },
+  lave:     { cri: 'Englouti par la lave !', gagne: 'Ton adversaire a plongé dans la lave !', perdu: 'Tu as plongé dans la lave…' },
+  crevasse: { cri: 'Avalé par la crevasse !', gagne: 'Ton adversaire a glissé dans la crevasse !', perdu: 'Tu as glissé dans la crevasse…' },
+};
+
 const RAISONS = {
   ko: (v) => (v ? 'Ton adversaire mord la poussière !' : 'Tu t’effondres dans le sable…'),
-  juges: (v) => (v ? 'Les juges te déclarent vainqueur.' : 'Les juges donnent la victoire à ton adversaire.'),
+  chute: (v) => {
+    const c = CHUTES[terrainDe(session?.arene).typeTrou] || CHUTES.gouffre;
+    return v ? c.gagne : c.perdu;
+  },
+  juges: (v) => (v ? 'Temps écoulé : les juges te déclarent vainqueur.' : 'Temps écoulé : les juges donnent la victoire à ton adversaire.'),
   abandon: (v) => (v ? 'Ton adversaire a abandonné.' : 'Tu as abandonné le combat.'),
   deconnexion: (v) => (v ? 'Ton adversaire a quitté l’arène.' : 'Tu as été déconnecté trop longtemps.'),
 };
 
 function recevoirFin(r) {
-  if (r.idMatch !== idMatch) return;
+  if (!session || r.idMatch !== session.idMatch) return;
   resultat = r;
   resultat.gain = appliquerResultat(r); // sauvegarde immédiate de la récompense
-  if (etat?.fini && !anim && file.length === 0) setTimeout(afficherResultat, 1400);
+  arreterControles();
+  setTimeout(afficherResultat, 700);
 }
 
 function afficherResultat() {
@@ -423,16 +288,45 @@ function afficherResultat() {
         <span>⚔ ${c.degats} dégâts infligés</span>
         <span>🎯 ${c.touches}/${c.attaques} coups portés (${precision} %)</span>
         <span>💥 ${c.critiques} critique${c.critiques > 1 ? 's' : ''}</span>
+        <span>🛡 ${c.parfaites} parade${c.parfaites > 1 ? 's' : ''} parfaite${c.parfaites > 1 ? 's' : ''}</span>
       </div>
       <div class="rangee-boutons">
+        ${boutonRejouer(r)}
         ${gain.points > 0 ? '<button class="btn" id="resultat-points">⚙ Répartir mes points</button>' : ''}
-        <button class="btn btn-or" id="resultat-village">🏠 Retour au village</button>
+        <button class="btn" id="resultat-village">🏠 Village</button>
       </div>
     </div>`;
   $('#combat-resultat').hidden = false;
   $('#resultat-village').onclick = () => allerA('village');
   const bp = $('#resultat-points');
   if (bp) bp.onclick = () => allerA('parametres');
+  const br = $('#resultat-rejouer');
+  if (br) br.onclick = () => rejouer(r, br);
+}
+
+// ----------------------------------------------------------------------------
+//  Rejouer sans repasser par le village
+//  - contre un bot : nouveau combat tout de suite, même difficulté, arène au hasard
+//  - contre un ami : on lui propose une revanche (il doit accepter)
+// ----------------------------------------------------------------------------
+function boutonRejouer(r) {
+  if (r.mode === 'ia') {
+    const d = DIFFICULTES[r.difficulte] || DIFFICULTES.normal;
+    return `<button class="btn btn-or" id="resultat-rejouer">🔁 Rejouer <small>(bot ${d.nom.toLowerCase()} ${d.icone})</small></button>`;
+  }
+  return r.adversaireId ? '<button class="btn btn-or" id="resultat-rejouer">⚔ Revanche</button>' : '';
+}
+
+function rejouer(r, bouton) {
+  if (!etatReseau.connecte) { notifier('Serveur injoignable : impossible de relancer un combat.', 'erreur'); return; }
+  bouton.disabled = true;
+  if (r.mode === 'ia') {
+    bouton.textContent = 'Préparation du combat…';
+    envoyer('match:training', { difficulte: r.difficulte || 'normal' });
+  } else {
+    bouton.textContent = '⏳ Revanche proposée…';
+    defier(r.adversaireId);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -445,116 +339,98 @@ export const ecranCombat = {
   musique: () => (resultatAffiche && resultat ? (resultat.victoire ? 'triomphe' : 'lamento') : 'combat'),
 
   initialiser() {
-    construireActions();
-    const barre = $('#combat-actions');
-    barre.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-action]');
-      if (b) jouer(b.dataset.action);
-    });
-    const bulle = $('#combat-infobulle');
-    barre.addEventListener('mouseover', (e) => {
-      const b = e.target.closest('button[data-action]');
-      if (!b || !etat) return;
-      survolAction = b.dataset.action;
-      bulle.innerHTML = texteInfobulle(survolAction);
-      bulle.hidden = false;
-      const r = b.getBoundingClientRect();
-      bulle.style.left = `${Math.max(8, Math.min(innerWidth - 300, r.left + r.width / 2 - 140))}px`;
-      bulle.style.bottom = `${innerHeight - r.top + 10}px`;
-    });
-    barre.addEventListener('mouseleave', () => { bulle.hidden = true; survolAction = null; });
+    construireCommandes();
 
     addEventListener('keydown', (e) => {
-      if (ecranCourant()?.nom !== 'combat' || e.repeat || e.target.tagName === 'INPUT') return;
-      const touche = e.key.toUpperCase();
-      let id = ORDRE_ACTIONS.find((a) => ACTIONS[a].touche === touche);
-      if (e.key === 'ArrowRight') id = monIndex === 0 ? 'avancer' : 'reculer';
-      if (e.key === 'ArrowLeft') id = monIndex === 0 ? 'reculer' : 'avancer';
-      if (id) { e.preventDefault(); jouer(id); }
+      if (ecranCourant()?.nom !== 'combat' || e.repeat) return;
+      // Écran de résultat : Entrée = Rejouer
+      if (!$('#combat-resultat').hidden) {
+        const br = $('#resultat-rejouer');
+        if (e.key === 'Enter' && br && !br.disabled) { e.preventDefault(); br.click(); }
+      }
     });
 
     $('#combat-abandon').addEventListener('click', () => {
-      if (etat?.fini) return;
+      if (!session || session.dernier.fini) return;
       if (confirm('Abandonner ce combat ? Il comptera comme une défaite.')) envoyer('match:forfeit');
+    });
+
+    // Onglet caché : on relâche toutes les touches côté serveur
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && session && ecranCourant()?.nom === 'combat') {
+        session.seq += 1;
+        envoyer('match:entrees', { e: [{ s: session.seq }] });
+      }
     });
 
     surReseau('match:state', recevoirEtat);
     surReseau('match:end', recevoirFin);
-    surReseau('match:error', ({ message }) => { notifier(message, 'erreur'); majActions(); });
+    // Revanche refusée ou expirée : le bouton redevient cliquable
+    surReseau('challenge:result', (d) => {
+      const br = $('#resultat-rejouer');
+      if (d.statut !== 'envoye' && br && br.disabled && resultat?.mode !== 'ia') {
+        br.disabled = false;
+        br.textContent = '⚔ Revanche';
+      }
+    });
     // Démarrage (ou reprise après une reconnexion) : on y va, où que l'on soit
     surReseau('match:start', (paquet) => allerA('combat', paquet, { fondu: ecranCourant()?.nom !== 'combat' }));
   },
 
   entrer(paquet) {
-    const reprise = paquet.idMatch === idMatch;
-    idMatch = paquet.idMatch;
-    monIndex = paquet.monIndex;
-    mode = paquet.mode;
-    difficulte = paquet.difficulte || null;
-    file = [];
-    anim = null;
+    const reprise = session && paquet.idMatch === session.idMatch;
+    session = new SessionCombat(paquet);
     if (!reprise) {
       resultat = null;
       resultatAffiche = false;
       vis.textes = [];
+      vis.impacts = [];
     }
-    vis.monIndex = monIndex;
-    vis.combattants = paquet.etat.combattants.map((c) => ({
-      skin: c.skin, equipement: c.equipement, x: c.position, pose: 'repos', avancement: 0, protege: false, decalage: 0,
-    }));
-    etat = paquet.etat;
-    $('#combat-resultat').hidden = true;
-    $('#combat-arene').textContent = ARENES[etat.arene].nom;
+    vis.arene = session.arene;
+    vis.monIndex = session.monIndex;
+    dernierT = null;
+    dernierDecompte = null;
+    moiAvant = null;
+    $('#combat-resultat').hidden = !resultatAffiche;
+    $('#combat-arene').textContent = ARENES[session.arene].nom;
     construireFiches();
-    appliquerEtat(paquet);
-    if (!reprise) {
-      const [a, b] = etat.combattants;
-      const intro = $('#combat-intro');
-      intro.innerHTML = `<span>${echapper(a.nom)}</span><b>VS</b><span>${echapper(b.nom)}</span>`;
-      intro.classList.remove('visible');
-      void intro.offsetWidth;
-      intro.classList.add('visible');
-      jouerSon('gong');
-    }
+    majFiches();
+    majCentre();
+    demarrerControles();
   },
 
   sortir() {
-    $('#combat-infobulle').hidden = true;
+    arreterControles();
   },
 
   dessiner(ctx, w, h, t) {
-    if (!etat) return;
-    animer();
-    vis.surbrillance = monTour() ? surbrillancePour(survolAction) : null;
+    if (!session) return;
+    const maintenant = performance.now();
+    const dt = dernierT === null ? 0 : Math.min(0.1, (maintenant - dernierT) / 1000);
+    dernierT = maintenant;
+
+    // Tes touches → prédiction locale + envoi au serveur
+    if (!resultat) {
+      const lot = session.avancer(dt, lireEntree);
+      if (lot.length) envoyer('match:entrees', { e: lot });
+    }
+
+    const moi = session.moiAffiche();
+    sonsLocaux(moi);
+    vis.combattants[session.monIndex] = moi;
+    vis.combattants[1 - session.monIndex] = session.adversaireAffiche(maintenant);
     dessinerCombat(ctx, w, h, t, vis);
 
-    // Minuteur du tour
-    const m = $('#combat-minuteur');
-    if (finTour && !etat.fini && !attente) {
-      const reste = Math.max(0, (finTour - performance.now()) / 1000);
-      const s = Math.ceil(reste);
-      m.hidden = false;
-      m.style.setProperty('--p', `${(reste / COMBAT.dureeTour) * 360}deg`);
-      m.querySelector('span').textContent = s;
-      m.classList.toggle('urgent', s <= 5);
-      if (s <= 5 && s > 0 && s !== dernierTic && etat.tour === monIndex) { dernierTic = s; jouerSon('tic'); }
-    } else {
-      m.hidden = true;
-    }
-    if (attente) {
-      const reste = Math.max(0, Math.ceil((attente.fin - performance.now()) / 1000));
-      const nom = etat.combattants[attente.index].nom;
-      $('#combat-attente').textContent = attente.index === monIndex
-        ? 'Connexion perdue… reconnexion en cours'
-        : `${nom} s’est déconnecté. Victoire automatique dans ${reste} s s’il ne revient pas.`;
-    }
-    if (!etatReseau.connecte) {
-      $('#combat-attente').hidden = false;
-      $('#combat-attente').textContent = 'Connexion au serveur perdue… reconnexion en cours';
-    } else if (!attente) {
-      $('#combat-attente').hidden = true;
+    // Barres et chrono ~15 fois par seconde (inutile de toucher la page à chaque image)
+    if (maintenant - derniereMajHud > 66) {
+      derniereMajHud = maintenant;
+      majFiches();
+      majRecharges();
+      majCentre();
     }
   },
 };
 
-export const combatEnCours = () => !!(idMatch && etat && !etat.fini);
+export const combatEnCours = () => !!(session && !session.dernier.fini);
+/** Pour déboguer depuis la console : la session de combat en cours */
+export const sessionCourante = () => session;

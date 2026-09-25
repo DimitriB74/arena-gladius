@@ -9,7 +9,7 @@
 //    challenge:response { idDefi, accepte }  répondre à un défi
 //    challenge:cancel   { idDefi }           annuler son défi
 //    match:training     { arene, difficulte } combat contre un bot (facile / normal / difficile)
-//    match:action       { action }           jouer une action pendant un combat
+///    match:entrees      { e: [...] }         touches pressées pendant un combat (temps réel)
 //    match:forfeit                           abandonner
 //
 //  Événements envoyés :
@@ -88,7 +88,7 @@ export class Lobby {
     ecouter('challenge:response', ({ idDefi, accepte }) => actif() && this.repondreDefi(joueur, idDefi, !!accepte));
     ecouter('challenge:cancel', ({ idDefi }) => actif() && this.annulerDefi(joueur, idDefi));
     ecouter('match:training', ({ arene, difficulte }) => actif() && this.lancerEntrainement(joueur, arene, difficulte));
-    ecouter('match:action', ({ action }) => actif() && joueur.match?.action(joueur, action));
+    ecouter('match:entrees', (lot) => actif() && joueur.match?.recevoirEntrees(joueur, lot));
     ecouter('match:forfeit', () => actif() && joueur.match?.abandon(joueur, 'abandon'));
 
     socket.on('disconnect', () => {

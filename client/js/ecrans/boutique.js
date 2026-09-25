@@ -79,8 +79,9 @@ function jouerAnimation() {
 function statsObjet(id, niveau = 0) {
   if (ARMES[id]) {
     const s = statsArme({ id, niveau });
-    const portee = s.porteeMin === s.porteeMax ? `${s.porteeMax} case` : `${s.porteeMin}-${s.porteeMax} cases`;
-    return { valeur: s.degats, texte: `⚔ ${s.degats} dégâts · 🎯 ${s.precision > 0 ? '+' : ''}${s.precision} % · ↔ ${portee}` };
+    const allonge = s.allonge >= 2 ? 'longue portée' : 'courte portée';
+    const vitesse = s.cadence ? ` · ⏱ ${s.cadence > 0 ? '+' : ''}${s.cadence} % de vitesse` : '';
+    return { valeur: s.degats, texte: `⚔ ${s.degats} dégâts${vitesse} · ↔ ${allonge}` };
   }
   const a = ARMURES[id];
   const v = valeurArmure({ id, niveau });

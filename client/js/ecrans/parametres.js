@@ -4,12 +4,13 @@
 //  export / import de la sauvegarde.
 // ============================================================================
 
-import { ORDRE_ATTRIBUTS, RECOMPENSES, STATS } from '/shared/data.js';
+import { ORDRE_ATTRIBUTS, RECOMPENSES, TEMPS_REEL } from '/shared/data.js';
 import {
-  statsCombattant, niveauPersonnage, chanceCritique, reductionArmure, coutAction, degatsBase,
+  statsCombattant, niveauPersonnage, chanceCritique, reductionArmure, degatsBase,
+  pointsInvestis, coutReinitialisation,
 } from '/shared/formulas.js';
-import { repartirPoints, appliquerRecompense } from '/shared/boutique.js';
-import { $, rendreAttributs, notifier } from '../ui.js';
+import { repartirPoints, appliquerRecompense, reinitialiserPoints } from '/shared/boutique.js';
+import { $, rendreAttributs, notifier, prixHtml } from '../ui.js';
 import { allerA } from '../navigation.js';
 import { lirePerso, appliquer, definirPerso } from '../etat.js';
 import { exporterCode, importerCode, effacerSauvegarde } from '../sauvegarde.js';
@@ -31,18 +32,23 @@ function attributsAffiches(perso) {
 function rendreStats(perso) {
   const attr = attributsAffiches(perso);
   const s = statsCombattant({ ...perso, attributs: attr });
-  const degats = degatsBase(s);
+  const base = degatsBase(s);
+  const tr = s.tr;
+  const pourcent = (v) => `${v >= 0 ? '+' : ''}${Math.round(v * 100)} %`;
+  const fr = (v) => String(v).replace('.', ',');   // 8.5 → 8,5
+  const hauteurSaut = Math.round((tr.impulsionSaut ** 2) / (2 * TEMPS_REEL.physique.gravite));
   const lignes = [
     ['❤️ Points de vie', s.pvMax],
-    ['⚡ Stamina', `${s.staminaMax} (+5 par tour)`],
-    ['◉ Bouclier', s.bouclierMax],
-    ['🛡 Armure', `${s.armure} → −${Math.round(reductionArmure(s) * 100)} % de dégâts`],
-    ['⚔ Dégâts de base', `${degats} (${s.arme.nom}${s.arme.niveau ? ` +${s.arme.niveau}` : ''})`],
-    ['🎯 Précision de l’arme', `${s.arme.precision > 0 ? '+' : ''}${s.arme.precision} %`],
-    ['💥 Critique', `${chanceCritique(s)} %`],
-    ['🪶 Esquive (Vitesse)', `+${STATS.vitesseVersEsquive} % par point d’avance sur l’adversaire`],
-    ['👣 Coût d’un pas', `${coutAction('avancer', s)} stamina`],
-    ['🗡 Coût d’une charge', `${coutAction('charger', s)} stamina`],
+    ['⚔ Attaque légère', `≈ ${Math.round(base * TEMPS_REEL.attaques.legere.mult)} dégâts`],
+    ['💥 Attaque lourde', `≈ ${Math.round(base * TEMPS_REEL.attaques.lourde.mult)} dégâts (${tr.coutLourde} stamina)`],
+    ['⏱ Vitesse d’attaque', pourcent(tr.cadence - 1)],
+    ['🎯 Critique', `${fr(chanceCritique(s))} % (dégâts ×1,5)`],
+    ['↔ Allonge', `${s.arme.allonge >= 2 ? 'longue' : 'courte'} (${s.arme.nom}${s.arme.niveau ? ` +${s.arme.niveau}` : ''})`],
+    ['🏃 Course', pourcent(tr.vitesse / TEMPS_REEL.deplacement.vitesseBase - 1)],
+    ['🦘 Hauteur de saut', `${hauteurSaut} (double saut en plus)`],
+    ['⚡ Stamina', `${s.staminaMax}, remonte de ${fr(tr.regenStamina)}/s`],
+    ['🛡 Garde', `${tr.gardeMax} (bouclier + Défense)`],
+    ['🪖 Armure', `${fr(s.armure)} → −${Math.round(reductionArmure(s) * 100)} % de dégâts`],
   ];
   $('#param-stats').innerHTML = lignes.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
 }
@@ -66,9 +72,25 @@ function rendrePoints() {
   $('#param-valider').disabled = !enAttente;
   $('#param-annuler').disabled = !enAttente;
   $('#param-aide-points').textContent = perso.pointsLibres > 0
-    ? 'Clique sur + pour placer tes points, puis valide. Une fois validés, ils sont définitifs.'
+    ? 'Clique sur + pour placer tes points, puis valide. Tu pourras tout redistribuer plus tard contre des crédits.'
     : `Gagne des combats pour obtenir des points : ${RECOMPENSES.joueur.victoire.points} par victoire contre un ami, ${RECOMPENSES.joueur.defaite.points} par défaite, ${RECOMPENSES.ia.normal.victoire.points} ou ${RECOMPENSES.ia.difficile.victoire.points} par victoire contre un bot.`;
   rendreStats(perso);
+  rendreReinitialisation(perso, enAttente);
+}
+
+/** Bouton « Réinitialiser mes points » : prix proportionnel aux points investis */
+function rendreReinitialisation(perso, enAttente) {
+  const n = pointsInvestis(perso.attributs);
+  const cout = coutReinitialisation(perso.attributs);
+  const bouton = $('#param-reinitialiser');
+  const info = $('#param-reinitialiser-info');
+  bouton.innerHTML = n > 0 ? `↺ Réinitialiser mes points ${prixHtml(cout)}` : '↺ Réinitialiser mes points';
+  bouton.disabled = n <= 0 || enAttente;
+  bouton.toggleAttribute('data-pauvre', n > 0 && perso.credits < cout);
+  if (n <= 0) info.textContent = 'Aucun point placé pour l’instant.';
+  else if (enAttente) info.textContent = 'Valide ou annule ta répartition en cours d’abord.';
+  else if (perso.credits < cout) info.textContent = `Rend tes ${n} points placés. Il te manque ${cout - perso.credits} crédits.`;
+  else info.textContent = `Rend tes ${n} points placés : tous tes attributs reviennent à 1.`;
 }
 
 function rendreFiche() {
@@ -101,6 +123,20 @@ export const ecranParametres = {
       rendreFiche();
     });
     $('#param-annuler').addEventListener('click', () => { ajouts = {}; rendrePoints(); });
+
+    $('#param-reinitialiser').addEventListener('click', () => {
+      const perso = lirePerso();
+      const n = pointsInvestis(perso.attributs);
+      const cout = coutReinitialisation(perso.attributs);
+      if (perso.credits < cout) { notifier(`Il faut ${cout} crédits pour réinitialiser tes points.`, 'erreur'); return; }
+      if (!confirm(`Réinitialiser tes points pour ${cout} crédits ?\n\nTes ${n} points placés te seront rendus : tous tes attributs reviendront à 1 et tu pourras les répartir à nouveau.`)) return;
+      const r = appliquer(reinitialiserPoints(perso));
+      if (r.ok) notifier(`${r.points} points rendus contre ${r.cout} crédits. À toi de les répartir !`, 'succes');
+      else notifier(r.erreur, 'erreur');
+      ajouts = {};
+      rendreFiche();
+      rendrePoints();
+    });
 
     $('#param-exporter').addEventListener('click', () => {
       const zone = $('#param-code-export');

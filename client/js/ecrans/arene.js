@@ -10,7 +10,9 @@ import { envoyer, etatReseau } from '../reseau.js';
 import { brancherListe } from '../defis.js';
 import { jouerSon } from '../audio.js';
 import { lirePerso } from '../etat.js';
-import { dessinerDecor, hauteurSol } from '../rendu/decor.js';
+import { terrainDe } from '/shared/terrain.js';
+import { dessinerDecor } from '../rendu/decor.js';
+import { geometrie, dessinerTerrain, dessinerAvantPlan } from '../rendu/terrain.js';
 import { dessinerGladiateur } from '../rendu/gladiateur.js';
 
 let etapes = [];        // [{ arene, fin }] : arène affichée jusqu'au temps `fin`
@@ -69,6 +71,9 @@ function reveler() {
   const a = ARENES[areneChoisie];
   $('#arene-nom').textContent = a.nom;
   $('#arene-description').textContent = a.description;
+  const p = $('#arene-particularites');
+  p.textContent = a.particularites || '';
+  p.classList.toggle('danger', terrainDe(areneChoisie).trous.length > 0);
   $('#panneau-arene').classList.add('revele');
   $('#arene-ia').disabled = false;
   $('#arene-ami').disabled = false;
@@ -114,6 +119,7 @@ export const ecranArene = {
     revele = false;
     $('#arene-nom').textContent = 'Tirage au sort…';
     $('#arene-description').textContent = 'Le maître des jeux choisit le lieu du combat.';
+    $('#arene-particularites').textContent = '';
     $('#panneau-arene').classList.remove('revele');
   },
 
@@ -124,16 +130,22 @@ export const ecranArene = {
     if (!revele && etape.fin === Infinity) reveler();
     if (!revele) $('#arene-nom').textContent = ARENES[etape.arene].nom;
 
+    // Le décor et le terrain de l'arène (obstacles, plateformes, trous)
     dessinerDecor(ctx, etape.arene, w, h, t);
+    const terrain = terrainDe(etape.arene);
+    const g = geometrie(w, h, h);
+    dessinerTerrain(ctx, g, terrain, t);
 
+    // Ton gladiateur, à sa place de départ
     const perso = lirePerso();
     if (perso) {
       const echelle = Math.max(0.9, Math.min(2, h / 430));
       dessinerGladiateur(ctx, {
-        x: Math.max(90, w * 0.2), y: hauteurSol(h) + 8, echelle, direction: 1, skin: perso.skin, equipement: perso.equipement,
+        x: g.px(terrain.departs[0]), y: g.sol + 4, echelle, direction: 1, skin: perso.skin, equipement: perso.equipement,
         pose: revele ? 'victoire' : 'repos', temps: t,
       });
     }
+    dessinerAvantPlan(ctx, g, terrain, t);
 
     // Flash au moment où l'arène est révélée
     if (revele) {

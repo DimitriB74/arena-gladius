@@ -38,8 +38,11 @@
       </div>
       <p class="devise">« Gloire, sable et sandales »</p>
       <div class="menu-titre">
-        <button class="btn btn-or" id="btn-nouvelle">⚔ Nouveau gladiateur</button>
-        <button class="btn" id="btn-continuer" disabled>Continuer</button>
+        <button class="btn btn-or" id="btn-continuer" hidden>Continuer</button>
+        <div class="choix-depart">
+          <button class="btn" id="btn-nouvelle">⚔ Nouveau gladiateur</button>
+          <button class="btn" id="btn-importer">📥 Importer une sauvegarde</button>
+        </div>
         <button class="btn" id="btn-codex">📜 Codex de l’arène</button>
       </div>
       <p class="statut-serveur" id="statut-serveur">Connexion au serveur…</p>
@@ -123,6 +126,7 @@
         <p class="surtitre">Le sort a désigné…</p>
         <h2 id="arene-nom">Tirage au sort…</h2>
         <p id="arene-description"></p>
+        <p id="arene-particularites" class="particularites"></p>
         <div class="rangee-boutons">
           <button class="btn btn-or" id="arene-ia" disabled>🤖 Combattre un bot</button>
           <button class="btn" id="arene-ami" disabled>👥 Défier un ami</button>
@@ -150,6 +154,10 @@
             <div class="rangee-boutons">
               <button class="btn petit" id="param-annuler" disabled>Annuler</button>
               <button class="btn btn-or petit" id="param-valider" disabled>✔ Valider la répartition</button>
+            </div>
+            <div class="bloc-reinitialiser">
+              <button class="btn petit" id="param-reinitialiser">↺ Réinitialiser mes points</button>
+              <small id="param-reinitialiser-info"></small>
             </div>
             <div id="param-test" class="bloc-test" hidden>
               <strong>Mode test</strong>
@@ -180,23 +188,21 @@
       </div>
     </section>
 
-    <!-- ===== Combat ===== -->
+    <!-- ===== Combat (temps réel) ===== -->
     <section id="ecran-combat" class="ecran">
       <div class="combat-haut">
         <div class="fiche-combattant" id="fiche-0"></div>
         <div class="combat-centre">
           <div class="combat-arene" id="combat-arene"></div>
-          <div class="combat-manche" id="combat-manche"></div>
-          <div class="minuteur" id="combat-minuteur" hidden><span>20</span></div>
-          <div class="bandeau-tour" id="combat-tour"></div>
+          <div class="chrono" id="combat-chrono">2:00</div>
         </div>
         <div class="fiche-combattant droite" id="fiche-1"></div>
       </div>
       <div class="bandeau-attente" id="combat-attente" hidden></div>
-      <div class="combat-intro" id="combat-intro"></div>
+      <div class="combat-decompte" id="combat-decompte" hidden></div>
       <div class="combat-bas">
-        <div class="journal" id="combat-journal"></div>
-        <div class="barre-actions" id="combat-actions"></div>
+        <div class="commandes" id="combat-commandes"></div>
+        <div class="recharges" id="combat-recharges"></div>
         <div class="combat-options">
           <button class="btn petit bouton-son" id="combat-son" data-texte="Son" title="Volume de la musique et des bruitages">🔊 Son</button>
           <button class="btn petit danger" id="combat-abandon">🏳 Abandonner</button>
@@ -221,8 +227,22 @@
     </label>
   </div>
 
-  <!-- Infobulle des actions de combat -->
-  <div id="combat-infobulle" class="infobulle" hidden></div>
+
+  <!-- Importer une sauvegarde depuis l'écran titre -->
+  <div id="modal-import" class="modal" hidden>
+    <div class="parchemin modal-carte import-carte">
+      <h2>📥 Importer une sauvegarde</h2>
+      <p>Colle ici ton code de sauvegarde. Il commence par <code>AG1.</code> et s’obtient dans
+        ⚙ Paramètres → <b>Exporter</b>.</p>
+      <textarea id="import-code" rows="4" placeholder="AG1.…" spellcheck="false"></textarea>
+      <p class="erreur" id="import-erreur"></p>
+      <div class="apercu-import" id="import-apercu" hidden></div>
+      <div class="rangee-boutons">
+        <button class="btn" id="import-annuler">Annuler</button>
+        <button class="btn btn-or" id="import-valider" disabled>Entrer dans la ville ➜</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Défi reçu -->
   <div id="modal-defi" class="modal" hidden>

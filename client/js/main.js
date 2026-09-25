@@ -22,7 +22,7 @@ import { ecranVillage } from './ecrans/village.js';
 import { ecranBoutique } from './ecrans/boutique.js';
 import { ecranArene } from './ecrans/arene.js';
 import { ecranParametres } from './ecrans/parametres.js';
-import { ecranCombat } from './ecrans/combat.js';
+import { ecranCombat, sessionCourante } from './ecrans/combat.js';
 import { etatReseau, surReseau, reseauDisponible } from './reseau.js';
 import { initialiserDefis } from './defis.js';
 
@@ -124,4 +124,4 @@ Promise.race([
 });
 
 // Pour déboguer depuis la console du navigateur
-window.arena = { allerA, lireSauvegarde };
+window.arena = { allerA, lireSauvegarde, session: sessionCourante };

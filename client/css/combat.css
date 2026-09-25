@@ -149,7 +149,7 @@
   background: rgba(43, 26, 14, 0.25);
   overflow: hidden;
 }
-.barre i { position: absolute; left: 0; top: 0; bottom: 0; transition: width 0.45s ease-out; }
+.barre i { position: absolute; left: 0; top: 0; bottom: 0; transition: width 0.15s ease-out; }
 .fiche-combattant.droite .barre i { left: auto; right: 0; }
 .barre span {
   position: relative;
@@ -163,48 +163,26 @@
 }
 .barre.pv i { background: linear-gradient(#ff7a6a, #c3261e); }
 .barre.stamina i { background: linear-gradient(#ffe27a, #d99a12); }
-.barre.bouclier i { background: linear-gradient(#9fd6ff, #2f7fc4); }
-.barre.bouclier { height: 13px; }
-.barre.bouclier span { font-size: 10px; line-height: 9px; }
+.barre.garde i { background: linear-gradient(#9fd6ff, #2f7fc4); }
+.barre.garde { height: 13px; }
+.barre.garde span { font-size: 10px; line-height: 9px; }
 
-.combat-centre { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 170px; }
+.combat-centre { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 150px; }
 .combat-arene { font-family: var(--romain); font-weight: 800; font-size: 13px; color: var(--parchemin); text-shadow: 0 1px 0 var(--encre), 0 0 6px var(--encre); }
-.combat-manche { font-family: var(--romain); font-weight: 800; background: var(--encre); color: var(--or); border-radius: 8px; padding: 2px 10px; font-size: 14px; }
-.minuteur {
-  --p: 360deg;
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  border: 3px solid var(--encre);
-  background: conic-gradient(var(--or) var(--p), rgba(43, 26, 14, 0.35) 0);
-  display: grid;
-  place-items: center;
-}
-.minuteur[hidden] { display: none; }
-.minuteur span {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--parchemin);
-  display: grid;
-  place-items: center;
+.chrono {
   font-family: var(--romain);
   font-weight: 800;
-  font-size: 19px;
+  font-size: 28px;
+  min-width: 96px;
+  text-align: center;
+  background: var(--encre);
+  color: var(--or);
+  border: 3px solid var(--or-fonce);
+  border-radius: 12px;
+  padding: 0 12px;
 }
-.minuteur.urgent { background: conic-gradient(var(--pourpre-clair) var(--p), rgba(43, 26, 14, 0.35) 0); animation: pulsation 0.5s infinite; }
-.bandeau-tour {
-  font-family: var(--romain);
-  font-weight: 800;
-  font-size: 16px;
-  background: var(--parchemin);
-  border: 3px solid var(--encre);
-  border-radius: 10px;
-  padding: 3px 12px;
-  white-space: nowrap;
-}
-.bandeau-tour.moi { background: linear-gradient(#ffd766, var(--or)); animation: pulsation 1.2s infinite; }
-.bandeau-tour.fin { background: var(--pourpre); color: var(--or); }
+.chrono.urgent { color: #ff7a6a; animation: pulsation 0.6s infinite; }
+.fiche-combattant.sonne { animation: tremble 0.25s infinite; }
 
 .bandeau-attente {
   background: rgba(43, 26, 14, 0.85);
@@ -217,102 +195,84 @@
 }
 .bandeau-attente[hidden] { display: none; }
 
-.combat-intro {
+/* « 3, 2, 1, Combat ! » */
+.combat-decompte {
   position: absolute;
-  top: 34%;
+  top: 36%;
   left: 50%;
   transform: translate(-50%, -50%);
-  display: flex;
-  gap: 18px;
-  align-items: center;
-  opacity: 0;
   font-family: var(--titre);
   font-weight: 900;
-  font-size: clamp(26px, 5vw, 54px);
+  font-size: clamp(60px, 11vw, 140px);
   color: var(--or);
-  -webkit-text-stroke: 2px var(--encre);
+  -webkit-text-stroke: 3px var(--encre);
   paint-order: stroke fill;
-  text-shadow: 0 4px 0 var(--encre);
+  text-shadow: 0 6px 0 var(--encre);
+  pointer-events: none;
   white-space: nowrap;
 }
-.combat-intro b { color: var(--pourpre-clair); font-size: 1.3em; }
-.combat-intro.visible { animation: intro 2.2s ease-out forwards; }
+.combat-decompte[hidden] { display: none; }
+.combat-decompte.anime { animation: decompte 0.8s ease-out forwards; }
 
 .combat-bas {
-  display: grid;
-  grid-template-columns: minmax(200px, 300px) 1fr auto;
+  display: flex;
   gap: 10px;
   width: min(1280px, 100%);
-  align-items: end;
+  align-items: flex-end;
+  justify-content: space-between;
 }
-.journal {
-  height: 150px;
-  overflow-y: auto;
-  background: rgba(43, 26, 14, 0.82);
+/* Rappel des touches */
+.commandes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  background: rgba(43, 26, 14, 0.78);
   border: 3px solid var(--encre);
   border-radius: 10px;
-  padding: 6px 8px;
-  font-size: 13px;
+  padding: 6px 10px;
   color: var(--parchemin);
+  font-size: 13px;
+  font-weight: 700;
+  max-width: 720px;
 }
-.journal p { margin: 0 0 3px; line-height: 1.25; }
-.journal p.info { color: #e6d6b0; }
-.journal p.moi { color: #b9f09a; }
-.journal p.lui { color: #ffb4a4; }
-.journal p.critique { color: var(--or); font-weight: 800; }
-.journal p.rate { opacity: 0.75; font-style: italic; }
-.journal p.fin { color: var(--or); font-weight: 800; font-size: 14px; }
-
-.barre-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  background: rgba(43, 26, 14, 0.82);
-  border: 3px solid var(--encre);
-  border-radius: 12px;
-  padding: 6px;
-  transition: box-shadow 0.2s;
+.commande { white-space: nowrap; }
+.commande kbd {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  font-family: var(--texte);
+  font-weight: 800;
+  background: var(--parchemin);
+  color: var(--encre);
+  border-radius: 5px;
+  border-bottom: 3px solid #b99a6a;
+  padding: 0 5px;
+  margin-right: 3px;
 }
-.barre-actions.mon-tour { border-color: var(--or); box-shadow: 0 0 18px rgba(242, 182, 50, 0.6); }
-.groupe-actions { display: flex; flex-direction: column; gap: 3px; }
-.groupe-actions > div { display: flex; gap: 5px; }
-.titre-groupe { font-family: var(--romain); font-size: 11px; font-weight: 800; color: var(--or); text-align: center; letter-spacing: 1px; text-transform: uppercase; }
-.action {
+.commande small { opacity: 0.7; margin-right: 4px; font-size: 11px; }
+/* Recharges : légère, lourde, esquive */
+.recharges { display: flex; gap: 8px; }
+.recharge {
   position: relative;
-  width: 86px;
-  height: 84px;
+  width: 62px;
+  height: 62px;
+  border-radius: 12px;
+  border: 3px solid var(--encre);
+  background: linear-gradient(var(--parchemin), var(--parchemin-fonce));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  background: linear-gradient(var(--parchemin), var(--parchemin-fonce));
-  border: 3px solid var(--encre);
-  border-radius: 10px;
-  box-shadow: 0 4px 0 var(--encre);
-  cursor: pointer;
-  padding: 2px;
-  color: var(--encre);
-  transition: transform 0.08s, box-shadow 0.08s;
+  overflow: hidden;
+  opacity: 0.6;
+  transition: opacity 0.1s, box-shadow 0.1s;
 }
-.action:hover:not(:disabled) { transform: translateY(-3px); box-shadow: 0 7px 0 var(--encre); background: linear-gradient(#fff3cf, var(--or)); }
-.action:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--encre); }
-.action:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.8); }
-.action-icone { font-size: 24px; line-height: 1; display: inline-block; }
-.action-nom { font-family: var(--romain); font-weight: 800; font-size: 11px; line-height: 1.05; text-align: center; }
-.action-cout { font-size: 12px; font-weight: 800; color: var(--or-fonce); }
-.action kbd {
-  position: absolute;
-  top: 2px;
-  right: 3px;
-  font-family: var(--texte);
-  font-size: 10px;
-  font-weight: 800;
-  background: var(--encre);
-  color: var(--parchemin);
-  border-radius: 4px;
-  padding: 0 3px;
-}
+.recharge.pret { opacity: 1; box-shadow: 0 0 12px rgba(242, 182, 50, 0.8); }
+.recharge.fatigue { opacity: 0.45; filter: grayscale(0.8); }
+.recharge i { position: absolute; left: 0; right: 0; top: 0; background: rgba(43, 26, 14, 0.55); }
+.recharge span { position: relative; font-size: 24px; line-height: 1; }
+.recharge small { position: relative; font-family: var(--romain); font-weight: 800; font-size: 10px; }
 .combat-options { display: flex; flex-direction: column; gap: 8px; }
 
 /* ---------------------------------------------------------------- Réglages du son */
@@ -372,24 +332,6 @@
 }
 
 
-.infobulle {
-  position: fixed;
-  z-index: 30;
-  width: 280px;
-  background: var(--parchemin);
-  border: 3px solid var(--encre);
-  border-radius: 10px;
-  padding: 8px 10px;
-  box-shadow: 0 4px 0 var(--encre);
-  font-size: 14px;
-  pointer-events: none;
-}
-.infobulle[hidden] { display: none; }
-.infobulle strong { font-family: var(--romain); font-size: 16px; }
-.infobulle .cout { float: right; font-weight: 800; color: var(--or-fonce); }
-.infobulle p { margin: 4px 0 0; }
-.infobulle .chiffres { font-weight: 800; }
-.infobulle .raison { color: var(--rouge); font-weight: 800; }
 
 /* ---------------------------------------------------------------- Résultat */
 .combat-resultat {
@@ -421,28 +363,26 @@
 .stats-fin { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: center; font-weight: 700; font-size: 14px; }
 .resultat-carte .rangee-boutons { justify-content: center; }
 
-@keyframes intro {
+@keyframes decompte {
   0% { opacity: 0; transform: translate(-50%, -50%) scale(2.2); }
-  15% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  75% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  100% { opacity: 0; transform: translate(-50%, -60%) scale(0.9); }
+  20% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0.2; transform: translate(-50%, -50%) scale(0.85); }
 }
+@keyframes tremble { 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
 @keyframes clignote { 50% { opacity: 0.45; } }
 
 /* ---------------------------------------------------------------- Écrans plus petits */
 @media (max-width: 1100px) {
-  .combat-bas { grid-template-columns: 1fr auto; }
-  .journal { grid-column: 1 / -1; height: 80px; order: 3; }
-  .action { width: 70px; height: 72px; }
-  .action-nom { font-size: 10px; }
+  .commandes { font-size: 12px; }
+  .recharge { width: 54px; height: 54px; }
 }
 @media (max-width: 760px) {
   .combat-haut { grid-template-columns: 1fr 1fr; }
   .combat-centre { grid-column: 1 / -1; grid-row: 1; flex-direction: row; justify-content: center; min-width: 0; }
   .fiche-combattant .portrait { display: none; }
-  .barre-actions { flex-wrap: wrap; }
-  .action { width: 58px; height: 62px; }
-  .action-icone { font-size: 18px; }
+  .combat-bas { flex-wrap: wrap; }
+  .commandes { display: none; }
   .village-lobby { width: calc(100% - 24px); max-height: 30vh; }
   .choix-difficulte { grid-template-columns: 1fr; }
   .carte-difficulte small { min-height: 0; }
