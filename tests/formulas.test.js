@@ -18,7 +18,7 @@ const ATTR = { force: 3, agilite: 3, defense: 2, vitalite: 3, endurance: 3, vite
 test('stats de base', () => {
   const s = statsCombattant(perso(ATTR, { bouclier: { id: 'bouclier_cuir', niveau: 0 } }));
   assert.equal(s.pvMax, 74);
-  assert.equal(s.staminaMax, 45);
+  assert.equal(s.staminaMax, 52);
   assert.equal(s.bouclierMax, 14);
   assert.equal(s.arme.id, 'poings');
 });
@@ -65,7 +65,9 @@ test('temps réel : la Vitesse fait courir et sauter, l’Agilité et l’arme a
   assert.ok(dureePhase('legere', 'preparation', vif) < dureePhase('legere', 'preparation', maladroit));
   assert.equal(maladroit.tr.coutLourde, Math.round(22 * 1.5), 'le marteau rend l’attaque lourde plus coûteuse');
   const lance = statsCombattant(perso(ATTR, { arme: { id: 'lance' } }));
-  assert.ok(lance.tr.allonge > lent.tr.allonge, 'la lance frappe de plus loin');
+  assert.ok(lance.tr.portee > lent.tr.portee, 'la lance frappe de plus loin');
+  assert.ok(vif.tr.coutLegere < maladroit.tr.coutLegere, 'la dague fatigue moins que le marteau');
+  assert.ok(maladroit.tr.coutLegere > 0, 'les attaques légères coûtent aussi de la stamina');
 });
 
 test('temps réel : Endurance → stamina qui remonte plus vite, Défense et bouclier → garde', () => {
@@ -130,8 +132,9 @@ test('la validation détecte les sauvegardes incohérentes', () => {
 
 test('toutes les armures et armes sont complètes', () => {
   assert.equal(Object.keys(ARMURES).length, 16);
+  assert.equal(Object.keys(ARMES).length, 14, '13 armes + les poings');
   for (const a of Object.values(ARMES)) {
-    for (const champ of ['degats', 'cadence', 'allonge', 'ignoreArmure', 'coutStamina', 'prix']) {
+    for (const champ of ['degats', 'cadence', 'portee', 'ignoreArmure', 'coutStamina', 'bonusCritique', 'briseGarde', 'recul', 'prix']) {
       assert.equal(typeof a[champ], 'number', `${a.nom}.${champ}`);
     }
   }

@@ -10,8 +10,9 @@ import {
 } from '/shared/data.js';
 import {
   statsArme, valeurArmure, totalInvesti, prixRevente, statsCombattant,
-  reductionArmure, degatsCoup, dureePhase,
+  reductionArmure, degatsCoup, dureePhase, coutAttaque,
 } from '/shared/formulas.js';
+import { distanceFente } from '/shared/combat.js';
 import { $ } from '../ui.js';
 import { allerA } from '../navigation.js';
 import { terrainDe } from '/shared/terrain.js';
@@ -21,6 +22,7 @@ import { dessinerFondColisee } from './titre.js';
 import { AIDE_TOUCHES } from '../combat/controles.js';
 
 const pct = (v) => `${Math.round(v * 100)} %`;
+const fr = (v) => String(v).replace('.', ',');   // 0.5 → 0,5
 
 // Gladiateur « témoin » pour les exemples chiffrés
 const TEMOIN_ATTR = { force: 3, agilite: 3, defense: 2, vitalite: 3, endurance: 3, vitesse: 2 };
@@ -34,13 +36,17 @@ const ONGLETS = {
     rendu() {
       const lignes = Object.entries(ARMES).map(([id, a]) => {
         const s0 = statsArme({ id, niveau: 0 }), s5 = statsArme({ id, niveau: AMELIORATION.niveauMax });
+        const cout = (t) => Math.max(1, Math.round(TEMPS_REEL.attaques[t].cout * a.coutStamina));
         return `<tr><td>${a.nom}</td><td><span class="palier">${a.palier}</span></td><td>${a.prix}</td>
           <td>${s0.degats} → ${s5.degats}</td><td>${a.cadence > 0 ? '+' : ''}${a.cadence} %</td>
-          <td>${a.allonge >= 2 ? 'longue' : 'courte'}</td>
+          <td>${a.portee}</td><td>${cout('legere')} / ${cout('lourde')}</td>
           <td style="text-align:left">${a.particularite}</td></tr>`;
       }).join('');
-      return `<p class="note">Dégâts de base à +0 → +${AMELIORATION.niveauMax}. La Force ajoute ${STATS.forceVersDegats} dégâts par point.</p>
-        <table class="tableau"><tr><th>Arme</th><th>Palier</th><th>Prix</th><th>Dégâts</th><th>Vitesse</th><th>Allonge</th><th>Particularité</th></tr>${lignes}</table>`;
+      return `<p class="note">Dégâts de base à +0 → +${AMELIORATION.niveauMax}. La Force ajoute ${STATS.forceVersDegats} dégâts par point.
+        La <b>portée</b> est la longueur de la zone de frappe devant le corps (un gladiateur fait ${TEMPS_REEL.corps.largeur} de large ;
+        l’attaque lourde porte ${Math.round((TEMPS_REEL.attaques.lourde.allonge - 1) * 100)} % plus loin).
+        La <b>stamina</b> est dépensée à chaque coup (légère / lourde), qu’il touche ou non.</p>
+        <table class="tableau"><tr><th>Arme</th><th>Palier</th><th>Prix</th><th>Dégâts</th><th>Vitesse</th><th>Portée</th><th>Stamina</th><th>Particularité</th></tr>${lignes}</table>`;
     },
   },
   armures: {
@@ -77,7 +83,7 @@ const ONGLETS = {
       const ms = (type, ph) => Math.round(dureePhase(type, ph, glaive) * 1000);
       const attaques = ['legere', 'lourde'].map((t) => `<tr><td>${R.attaques[t].nom}</td>
         <td>${ms(t, 'preparation')} ms</td><td>${ms(t, 'active') + ms(t, 'recuperation')} ms</td>
-        <td>${t === 'lourde' ? glaive.tr.coutLourde : 0}</td><td>~${degatsCoup(t, glaive, cible)}</td></tr>`).join('');
+        <td>${coutAttaque(t, glaive)}</td><td>~${degatsCoup(t, glaive, cible)}</td></tr>`).join('');
       return `<p class="note">Le combat se joue en temps réel. On gagne quand les PV adverses tombent à 0
         ou quand l’adversaire tombe dans un trou (voir les arènes) ; après ${R.dureeMax / 60} minutes, au plus haut % de PV restants.</p>
         <table class="tableau"><tr><th>Commande</th><th>Touches (AZERTY)</th></tr>${commandes}</table>
@@ -88,8 +94,15 @@ const ONGLETS = {
           <b>Parer</b> (maintenir) : les coups reçus de face vident la <b>garde</b> au lieu des PV (${Math.round(R.parade.reductionDegats * 100)} % arrêtés).
           Garde vide : garde brisée, tu es sonné. Parade levée au tout dernier moment (${Math.round(R.parade.fenetreParfaite * 1000)} ms) :
           <b>parade parfaite</b>, c’est l’attaquant qui est sonné.<br>
-          <b>Esquive</b> : un dash rapide, invincible pendant ${Math.round(R.esquive.invincibilite * 1000)} ms, pour ${R.esquive.cout} stamina.<br>
-          <b>Stamina</b> : se vide avec les esquives et les attaques lourdes, puis remonte toute seule.</p>`;
+          <b>Esquive</b> : un dash rapide, invincible pendant ${Math.round(R.esquive.invincibilite * 1000)} ms, pour ${R.esquive.cout} stamina.
+          C’est le seul moyen de passer à travers l’adversaire : sinon, les corps se repoussent.<br>
+          <b>Stamina</b> : chaque coup et chaque esquive en coûtent ; elle ne remonte qu’après ${fr(R.stamina.delaiRegen)} s sans rien dépenser.
+          Qui la vide est <b>épuisé</b> : ni attaque ni esquive tant qu’elle n’est pas remontée à ${Math.round(R.stamina.finEpuisement * 100)} %.
+          Frapper sans arrêt se paie donc cher.<br>
+          <b>Fente</b> : en attaquant au sol, on s’élance vers l’avant (≈ ${Math.round(distanceFente(glaive, 'legere'))} unités pour une légère,
+          ${Math.round(distanceFente(glaive, 'lourde'))} pour une lourde) : pas besoin de coller l’adversaire.<br>
+          <b>Enchaînement</b> : les coups reçus d’affilée (moins de ${fr(R.enchainement.fenetre)} s d’écart) étourdissent de moins en moins
+          et repoussent de plus en plus loin : impossible de bloquer quelqu’un en frappant sans arrêt.</p>`;
     },
   },
   arenes: {

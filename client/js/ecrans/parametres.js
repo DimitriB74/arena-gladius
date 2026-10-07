@@ -39,14 +39,14 @@ function rendreStats(perso) {
   const hauteurSaut = Math.round((tr.impulsionSaut ** 2) / (2 * TEMPS_REEL.physique.gravite));
   const lignes = [
     ['❤️ Points de vie', s.pvMax],
-    ['⚔ Attaque légère', `≈ ${Math.round(base * TEMPS_REEL.attaques.legere.mult)} dégâts`],
+    ['⚔ Attaque légère', `≈ ${Math.round(base * TEMPS_REEL.attaques.legere.mult)} dégâts (${tr.coutLegere} stamina)`],
     ['💥 Attaque lourde', `≈ ${Math.round(base * TEMPS_REEL.attaques.lourde.mult)} dégâts (${tr.coutLourde} stamina)`],
     ['⏱ Vitesse d’attaque', pourcent(tr.cadence - 1)],
     ['🎯 Critique', `${fr(chanceCritique(s))} % (dégâts ×1,5)`],
-    ['↔ Allonge', `${s.arme.allonge >= 2 ? 'longue' : 'courte'} (${s.arme.nom}${s.arme.niveau ? ` +${s.arme.niveau}` : ''})`],
+    ['↔ Portée', `${tr.portee}, lourde ${Math.round(tr.portee * TEMPS_REEL.attaques.lourde.allonge)} (${s.arme.nom}${s.arme.niveau ? ` +${s.arme.niveau}` : ''})`],
     ['🏃 Course', pourcent(tr.vitesse / TEMPS_REEL.deplacement.vitesseBase - 1)],
     ['🦘 Hauteur de saut', `${hauteurSaut} (double saut en plus)`],
-    ['⚡ Stamina', `${s.staminaMax}, remonte de ${fr(tr.regenStamina)}/s`],
+    ['⚡ Stamina', `${s.staminaMax} (≈ ${Math.floor(s.staminaMax / tr.coutLegere)} coups légers d’affilée), remonte de ${fr(tr.regenStamina)}/s`],
     ['🛡 Garde', `${tr.gardeMax} (bouclier + Défense)`],
     ['🪖 Armure', `${fr(s.armure)} → −${Math.round(reductionArmure(s) * 100)} % de dégâts`],
   ];

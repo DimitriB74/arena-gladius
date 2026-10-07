@@ -21,7 +21,7 @@ export const ATTRIBUTS = {
   agilite:   { nom: 'Agilité',   icone: '🎯', description: 'Attaques plus rapides (moins d’attente entre deux coups) et plus de critiques.' },
   defense:   { nom: 'Défense',   icone: '🛡️', description: 'Réduit les dégâts reçus et renforce ta garde.' },
   vitalite:  { nom: 'Vitalité',  icone: '❤️', description: 'Augmente les points de vie max.' },
-  endurance: { nom: 'Endurance', icone: '⚡', description: 'Plus de stamina, qui remonte plus vite (esquives, attaques lourdes).' },
+  endurance: { nom: 'Endurance', icone: '⚡', description: 'Plus de stamina, qui remonte plus vite : plus de coups et d’esquives d’affilée.' },
   vitesse:   { nom: 'Vitesse',   icone: '🪶', description: 'Course plus rapide et sauts plus hauts.' },
 };
 
@@ -78,53 +78,89 @@ export const SKINS = {
 
 // ----------------------------------------------------------------------------
 //  Armes
-//  degats      : dégâts de base (avant Force et multiplicateur d'attaque)
-//  cadence     : vitesse d'attaque en % (+20 = coups 20 % plus rapides)
-//  allonge     : 1 = courte portée, 2 = longue portée (voir TEMPS_REEL.allonges)
-//  ignoreArmure : part de l'armure adverse ignorée (0,3 = 30 %)
-//  coutStamina : multiplicateur du coût en stamina de l'attaque lourde
-//  palier      : 0 = de base, 1 à 3 = gamme de prix
+//  degats        : dégâts de base (avant Force et multiplicateur d'attaque)
+//  cadence       : vitesse d'attaque en % (+20 = coups 20 % plus rapides)
+//  portee        : longueur de la zone de frappe devant le corps (unités de l'arène ;
+//                  le corps fait 56 de large). L'attaque lourde porte 15 % plus loin.
+//  coutStamina   : multiplicateur du coût en stamina des attaques (légère et lourde)
+//  ignoreArmure  : part de l'armure adverse ignorée (0,3 = 30 %)
+//  bonusCritique : points de % de critique en plus
+//  briseGarde    : multiplicateur de ce que la garde adverse encaisse quand elle pare
+//  recul         : multiplicateur du recul infligé (pour pousser vers le vide)
+//  palier        : 0 = de base, 1 à 3 = gamme de prix
 // ----------------------------------------------------------------------------
+const ARME_PAR_DEFAUT = { ignoreArmure: 0, coutStamina: 1, bonusCritique: 0, briseGarde: 1, recul: 1 };
+
 export const ARMES = {
   poings: {
-    nom: 'Poings nus', palier: 0, prix: 0, vendable: false,
-    degats: 2, cadence: 25, allonge: 1, ignoreArmure: 0, coutStamina: 1,
-    particularite: 'Toujours disponibles quand aucune arme n’est équipée. Très rapides.',
+    ...ARME_PAR_DEFAUT, nom: 'Poings nus', palier: 0, prix: 0, vendable: false,
+    degats: 2, cadence: 25, portee: 70, coutStamina: 0.7,
+    particularite: 'Toujours disponibles quand aucune arme n’est équipée. Rapides, mais il faut être tout près.',
   },
   dague: {
-    nom: 'Dague', palier: 1, prix: 60,
-    degats: 5, cadence: 20, allonge: 1, ignoreArmure: 0, coutStamina: 1,
-    particularite: 'Frappe très vite (+20 % de vitesse d’attaque).',
+    ...ARME_PAR_DEFAUT, nom: 'Dague', palier: 1, prix: 60,
+    degats: 5, cadence: 20, portee: 95, coutStamina: 0.8, bonusCritique: 5,
+    particularite: 'Frappe vite (+20 %), fatigue peu et vise les points faibles (+5 % de critique).',
+  },
+  cestes: {
+    ...ARME_PAR_DEFAUT, nom: 'Cestes', palier: 1, prix: 90,
+    degats: 4, cadence: 32, portee: 75, coutStamina: 0.55,
+    particularite: 'Gantelets cloutés de pugiliste : les coups les plus rapides et les moins fatigants.',
   },
   glaive: {
-    nom: 'Épée courte', palier: 1, prix: 140,
-    degats: 8, cadence: 5, allonge: 1, ignoreArmure: 0, coutStamina: 1,
-    particularite: 'Équilibrée, sans faiblesse.',
+    ...ARME_PAR_DEFAUT, nom: 'Épée courte', palier: 1, prix: 140,
+    degats: 8, cadence: 5, portee: 110,
+    particularite: 'Le gladius des légionnaires : équilibré, sans faiblesse.',
   },
   lance: {
-    nom: 'Lance', palier: 1, prix: 170,
-    degats: 7, cadence: 0, allonge: 2, ignoreArmure: 0, coutStamina: 1,
-    particularite: 'Longue portée : frappe de plus loin.',
+    ...ARME_PAR_DEFAUT, nom: 'Lance', palier: 1, prix: 170,
+    degats: 7, cadence: 0, portee: 175,
+    particularite: 'Très longue portée : tient l’adversaire à distance.',
+  },
+  sica: {
+    ...ARME_PAR_DEFAUT, nom: 'Sica', palier: 2, prix: 240,
+    degats: 9, cadence: 12, portee: 105, bonusCritique: 12,
+    particularite: 'Lame courbe des Thraces : rapide (+12 %) et redoutable (+12 % de critique).',
   },
   masse: {
-    nom: 'Masse', palier: 2, prix: 320,
-    degats: 10, cadence: -5, allonge: 1, ignoreArmure: 0.3, coutStamina: 1,
-    particularite: 'Ignore 30 % de l’armure adverse.',
+    ...ARME_PAR_DEFAUT, nom: 'Masse', palier: 2, prix: 320,
+    degats: 10, cadence: -5, portee: 110, ignoreArmure: 0.3, briseGarde: 1.3,
+    particularite: 'Ignore 30 % de l’armure et entame la garde (+30 %).',
   },
   hache: {
-    nom: 'Hache', palier: 2, prix: 340,
-    degats: 13, cadence: -12, allonge: 1, ignoreArmure: 0, coutStamina: 1,
+    ...ARME_PAR_DEFAUT, nom: 'Hache', palier: 2, prix: 340,
+    degats: 13, cadence: -12, portee: 115,
     particularite: 'Gros dégâts, mais coups un peu plus lents (−12 %).',
   },
+  spatha: {
+    ...ARME_PAR_DEFAUT, nom: 'Spatha', palier: 2, prix: 400,
+    degats: 11, cadence: 0, portee: 140,
+    particularite: 'Épée longue de cavalier : bonne allonge sans rien perdre en vitesse.',
+  },
+  fleau: {
+    ...ARME_PAR_DEFAUT, nom: 'Fléau d’armes', palier: 2, prix: 430,
+    degats: 12, cadence: -10, portee: 145, coutStamina: 1.15, briseGarde: 1.8,
+    particularite: 'La chaîne contourne le bouclier : la garde adverse fond (×1,8).',
+  },
   trident: {
-    nom: 'Trident', palier: 3, prix: 650,
-    degats: 12, cadence: 0, allonge: 2, ignoreArmure: 0.1, coutStamina: 1,
-    particularite: 'Longue portée, ignore 10 % de l’armure.',
+    ...ARME_PAR_DEFAUT, nom: 'Trident', palier: 3, prix: 650,
+    degats: 12, cadence: 0, portee: 175, ignoreArmure: 0.1, recul: 1.15,
+    particularite: 'Très longue portée, ignore 10 % de l’armure et repousse fort.',
   },
   marteau: {
-    nom: 'Marteau de guerre', palier: 3, prix: 700,
-    degats: 19, cadence: -25, allonge: 1, ignoreArmure: 0.15, coutStamina: 1.5,
-    particularite: 'Dégâts énormes, mais lent (−25 %) et attaque lourde plus coûteuse.',
+    ...ARME_PAR_DEFAUT, nom: 'Marteau de guerre', palier: 3, prix: 700,
+    degats: 19, cadence: -25, portee: 125, ignoreArmure: 0.15, coutStamina: 1.5, recul: 1.35,
+    particularite: 'Dégâts énormes et gros recul, mais lent (−25 %) et fatigant.',
+  },
+  falx: {
+    ...ARME_PAR_DEFAUT, nom: 'Falx', palier: 3, prix: 760,
+    degats: 15, cadence: -5, portee: 140, ignoreArmure: 0.25, bonusCritique: 6,
+    particularite: 'Lame recourbée des Daces : ignore 25 % de l’armure, +6 % de critique.',
+  },
+  bipenne: {
+    ...ARME_PAR_DEFAUT, nom: 'Bipenne', palier: 3, prix: 850,
+    degats: 22, cadence: -30, portee: 130, coutStamina: 1.6, recul: 1.5,
+    particularite: 'Hache à double tranchant : le coup le plus puissant, projette loin (près du vide…), mais très lent.',
   },
 };
 
@@ -193,7 +229,7 @@ export const COMMERCE = {
 // ----------------------------------------------------------------------------
 export const STATS = {
   pvBase: 50, pvParVitalite: 8,
-  staminaBase: 30, staminaParEndurance: 5,
+  staminaBase: 40, staminaParEndurance: 4,
   bouclierParDefense: 2,
 
   forceVersDegats: 3,               // dégâts = arme + Force × 3
@@ -252,23 +288,38 @@ export const TEMPS_REEL = {
   //   active      : le coup peut toucher
   //   recuperation: on ne peut rien faire juste après
   //   recharge    : attente avant de pouvoir refaire CETTE attaque
+  //   cout        : stamina dépensée à chaque coup, touché ou raté (× coutStamina de l'arme) :
+  //                 c'est ce qui empêche de frapper sans arrêt
+  //   allonge     : la zone de frappe fait portée de l'arme × allonge
+  //   zone        : hauteur de la zone de frappe [bas, haut], depuis les pieds
+  //   fente       : vitesse vers l'avant pendant que le coup part (au sol) : on s'élance
   attaques: {
     legere: {
-      nom: 'Attaque légère', preparation: 0.07, active: 0.1, recuperation: 0.16, recharge: 0.1,
-      mult: 0.16, cout: 0, allonge: 1, recul: 260, reculHaut: 60, etourdissement: 0.22,
+      nom: 'Attaque légère', preparation: 0.08, active: 0.12, recuperation: 0.18, recharge: 0.18,
+      mult: 0.18, cout: 7, allonge: 1, zone: [15, 145], fente: 260,
+      recul: 280, reculHaut: 60, etourdissement: 0.24,
     },
     lourde: {
-      nom: 'Attaque lourde', preparation: 0.32, active: 0.12, recuperation: 0.34, recharge: 0.45,
-      mult: 0.52, cout: 22, allonge: 1.15, recul: 620, reculHaut: 330, etourdissement: 0.5,
+      nom: 'Attaque lourde', preparation: 0.32, active: 0.14, recuperation: 0.34, recharge: 0.45,
+      mult: 0.52, cout: 22, allonge: 1.15, zone: [0, 170], fente: 420,
+      recul: 620, reculHaut: 330, etourdissement: 0.5,
     },
   },
-  // Longueur de la zone de frappe selon l'allonge de l'arme (1 = courte, 2 = longue)
-  allonges: { 1: 95, 2: 155 },
+  // La zone de frappe commence un peu DERRIÈRE le centre du corps : un adversaire
+  // collé (ou qui nous traverse) est quand même touché
+  zoneArriere: 15,
+  // Coups enchaînés sur le même adversaire (moins de `fenetre` s entre deux coups) :
+  // chaque coup de plus étourdit moins longtemps et repousse plus loin, pour qu'on ne
+  // puisse pas bloquer l'adversaire en frappant sans arrêt
+  enchainement: { fenetre: 0.9, etourdissement: 0.6, recul: 0.45, etourdissementMin: 0.07 },
   // Agilité et arme accélèrent les attaques : cadence = (1 + Agilité × 1,2 %) × (1 + bonus d'arme)
   cadence: { parPointAgilite: 0.012, multMax: 1.8, multMin: 0.6 },
 
-  // Stamina : se consomme (esquive, attaque lourde) et remonte avec le temps
-  stamina: { regenBase: 14, regenParEndurance: 0.6, delaiRegen: 0.6 },
+  // Stamina : se consomme (chaque attaque, esquive) et remonte avec le temps,
+  // mais seulement après `delaiRegen` s sans rien dépenser : frapper en continu la vide
+  // Vider sa jauge (moins de quoi faire un coup léger) rend ÉPUISÉ : plus d'attaque ni
+  // d'esquive tant que la stamina n'est pas remontée à `finEpuisement` (part du maximum)
+  stamina: { regenBase: 16, regenParEndurance: 0.5, delaiRegen: 0.5, finEpuisement: 0.5 },
 
   // Parade : maintenir la touche. Les coups reçus de face vident la GARDE au lieu
   // des PV ; garde vide = garde brisée (sonné). Une parade lancée au tout dernier
@@ -469,25 +520,26 @@ export const RECOMPENSES = {
 //  agressivite    : envie d'attaquer plutôt que d'attendre
 //  lourde         : part d'attaques lourdes
 //  hesitation     : part de moments où il hésite ou se trompe
+//  reserveStamina : stamina qu'il garde de côté pour pouvoir esquiver
 // ----------------------------------------------------------------------------
 export const DIFFICULTES = {
   facile: {
     nom: 'Facile', icone: '🌿', titre: 'la Recrue',
     description: 'Un débutant maladroit, un peu plus faible que toi. Idéal pour s’entraîner.',
     multPoints: 0.85, multEquipement: 0.65,
-    reaction: 0.4, parade: 0.12, paradeParfaite: 0, esquive: 0.05, agressivite: 0.55, lourde: 0.15, hesitation: 0.35,
+    reaction: 0.4, parade: 0.12, paradeParfaite: 0, esquive: 0.05, agressivite: 0.55, lourde: 0.15, hesitation: 0.35, reserveStamina: 0,
   },
   normal: {
     nom: 'Normal', icone: '⚔️', titre: 'le Gladiateur',
     description: 'Un adversaire de ton niveau qui sait se battre.',
     multPoints: 0.95, multEquipement: 0.9,
-    reaction: 0.25, parade: 0.4, paradeParfaite: 0.08, esquive: 0.2, agressivite: 0.75, lourde: 0.25, hesitation: 0.12,
+    reaction: 0.25, parade: 0.4, paradeParfaite: 0.08, esquive: 0.2, agressivite: 0.75, lourde: 0.25, hesitation: 0.12, reserveStamina: 8,
   },
   difficile: {
     nom: 'Difficile', icone: '🔥', titre: 'le Champion',
     description: 'Un champion rusé et un peu plus fort que toi : il anticipe tes coups.',
     multPoints: 1.05, multEquipement: 1.05,
-    reaction: 0.15, parade: 0.65, paradeParfaite: 0.3, esquive: 0.4, agressivite: 0.85, lourde: 0.3, hesitation: 0.03,
+    reaction: 0.15, parade: 0.65, paradeParfaite: 0.3, esquive: 0.4, agressivite: 0.85, lourde: 0.3, hesitation: 0.03, reserveStamina: 18,
   },
 };
 export const ORDRE_DIFFICULTES = ['facile', 'normal', 'difficile'];

@@ -3,12 +3,14 @@
 //
 //  Dessin d'un combat en temps réel, vu de côté :
 //  décor de l'arène, terrain (voir terrain.js), gladiateurs (poses selon ce
-//  qu'ils font), signal des attaques lourdes, bulle de garde, étoiles quand on
+//  qu'ils font), traînée de l'arme (= zone de frappe), signal des attaques
+//  lourdes, bulle de garde, étoiles quand on
 //  est sonné, traînée de l'esquive, textes flottants et secousse à l'impact.
 // ============================================================================
 
 import { dureePhase } from '/shared/formulas.js';
 import { terrainDe, supportSous } from '/shared/terrain.js';
+import { boiteFrappe } from '/shared/combat.js';
 import { dessinerDecor } from './decor.js';
 import { geometrie, dessinerTerrain, dessinerAvantPlan } from './terrain.js';
 import { dessinerGladiateur } from './gladiateur.js';
@@ -80,6 +82,44 @@ function etoiles(ctx, x, y, e, t) {
   }
 }
 
+/**
+ * Traînée de l'arme : un croissant qui couvre exactement la zone de frappe (celle
+ * du serveur), pour voir jusqu'où porte le coup. Pleine quand le coup peut toucher,
+ * elle s'efface au début de la récupération.
+ */
+function traineeArme(ctx, g, c) {
+  const a = c.attaque;
+  if (!a || (a.phase !== 'active' && a.phase !== 'recuperation')) return;
+  const force = a.phase === 'active' ? 1 : 1 - a.t / (dureePhase(a.type, 'recuperation', c.stats) * 0.5);
+  if (force <= 0) return;
+  const z = boiteFrappe(c);
+  const bout = c.dir > 0 ? z.x2 : z.x1;
+  const cx = g.px(c.x), cy = g.py((z.y1 + z.y2) / 2);
+  const rx = Math.abs(g.px(bout) - cx), ry = ((z.y2 - z.y1) * g.e) / 2;
+  const lourde = a.type === 'lourde';
+  ctx.save();
+  ctx.globalAlpha = (lourde ? 0.75 : 0.65) * force;
+  ctx.translate(cx, cy);
+  ctx.scale(c.dir, 1);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, rx, ry, 0, -Math.PI / 2, Math.PI / 2);
+  ctx.ellipse(rx * 0.22, 0, rx * 0.7, ry * 0.78, 0, Math.PI / 2, -Math.PI / 2, true);
+  ctx.closePath();
+  const degrade = ctx.createLinearGradient(0, 0, rx, 0);
+  degrade.addColorStop(0, 'rgba(255,255,255,0)');
+  degrade.addColorStop(0.6, lourde ? 'rgba(255,200,90,0.7)' : 'rgba(255,255,255,0.6)');
+  degrade.addColorStop(1, lourde ? 'rgba(255,170,40,1)' : 'rgba(255,255,255,1)');
+  ctx.fillStyle = degrade;
+  ctx.fill();
+  // Liseré sur le bord extérieur : on voit nettement jusqu'où va le coup
+  ctx.beginPath();
+  ctx.ellipse(0, 0, rx, ry, 0, -Math.PI / 2.6, Math.PI / 2.6);
+  ctx.strokeStyle = lourde ? 'rgba(160,70,10,0.8)' : 'rgba(43,26,14,0.45)';
+  ctx.lineWidth = Math.max(1.5, 3 * g.e);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** Signal d'attaque lourde : un éclat rouge au-dessus de la tête pendant la préparation */
 function signalLourde(ctx, x, y, e, t) {
   const p = 0.6 + Math.sin(t * 30) * 0.4;
@@ -124,8 +164,16 @@ function dessinerCombattant(ctx, g, terrain, c, t, estMoi) {
     x, y, echelle, direction: c.dir, skin: c.skin, equipement: c.equipement, pose, avancement: av, temps: t + c.index,
   });
   ctx.restore();
+  traineeArme(ctx, g, c);
 
   if (c.parade) bulleGarde(ctx, x, y, echelle, c.dir, c.garde / Math.max(1, c.stats.tr.gardeMax));
+  // Épuisé : il ne peut plus ni frapper ni esquiver, c'est le moment d'attaquer
+  if (c.epuise && c.etat !== 'ko' && c.etat !== 'victoire') {
+    ctx.save();
+    ctx.globalAlpha = 0.7 + Math.sin(t * 8) * 0.3;
+    texteContour(ctx, 'ÉPUISÉ', x, y - 162 * echelle, { taille: Math.round(13 * Math.max(1, echelle)), couleur: '#ff9a3a', epaisseur: 4 });
+    ctx.restore();
+  }
   if (c.etat === 'etourdi' && c.sonne) etoiles(ctx, x, y - 150 * echelle, echelle, t);
   if (c.etat === 'attaque' && c.attaque?.type === 'lourde' && c.attaque.phase === 'preparation') {
     signalLourde(ctx, x, y - 170 * echelle, echelle, t);

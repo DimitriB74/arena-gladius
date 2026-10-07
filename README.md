@@ -119,11 +119,28 @@ Bon à savoir :
 | 🎯 Agilité | vitesse d'attaque (+1,2 % par point) et coups critiques |
 | 🛡 Défense | réduit les dégâts reçus et renforce ta garde |
 | ❤ Vitalité | +8 PV |
-| ⚡ Endurance | plus de stamina, qui remonte plus vite |
+| ⚡ Endurance | plus de stamina (plus de coups et d'esquives d'affilée), qui remonte plus vite |
 | 🪶 Vitesse | course plus rapide et sauts plus hauts |
 
-Les armes ont aussi leur caractère : la dague frappe vite, la lance et le trident frappent
-de loin, le marteau frappe très fort mais lentement.
+### Les armes (13, plus les poings)
+Chaque arme a sa **portée** (longueur de la zone de frappe), sa vitesse, son coût en stamina
+et souvent un trait particulier. Le détail chiffré est dans le **📜 Codex** (onglet Armes).
+
+| Arme | Prix | Ce qui la distingue |
+|---|---|---|
+| Dague | 60 | rapide, peu fatigante, +5 % de critique |
+| Cestes | 90 | gantelets : les coups les plus rapides et les moins fatigants, portée courte |
+| Épée courte | 140 | équilibrée |
+| Lance | 170 | très longue portée |
+| Sica | 240 | lame courbe : rapide, +12 % de critique |
+| Masse | 320 | ignore 30 % de l'armure, entame la garde |
+| Hache | 340 | gros dégâts, un peu lente |
+| Spatha | 400 | épée longue : bonne portée sans perdre en vitesse |
+| Fléau d'armes | 430 | fait fondre la garde adverse (×1,8) |
+| Trident | 650 | très longue portée, repousse fort |
+| Marteau de guerre | 700 | énormes dégâts et gros recul, lent et fatigant |
+| Falx | 760 | ignore 25 % de l'armure, +6 % de critique |
+| Bipenne | 850 | le coup le plus puissant, projette loin (près du vide…), très lente |
 
 ### Combat (en temps réel)
 Deux gladiateurs s'affrontent dans l'arène tirée au sort. On gagne quand les PV de
@@ -141,13 +158,20 @@ Après **2 minutes**, les juges donnent la victoire au plus haut % de PV restant
 | Esquive (dash) | Maj | B |
 
 - **Attaque légère** : rapide, peu de dégâts. **Attaque lourde** : se prépare plus longtemps
-  (un **!** rouge prévient l'adversaire), fait très mal et coûte de la stamina.
+  (un **!** rouge prévient l'adversaire), porte plus loin et fait très mal.
+- **Fente** : en attaquant au sol, on s'élance vers l'avant. La traînée de l'arme montre
+  exactement la zone touchée : pas besoin de coller l'adversaire.
 - **Parer** : les coups reçus de face vident ta **garde** (barre bleue) au lieu de tes PV.
   Garde vide = **garde brisée**, tu es sonné. Si tu lèves la garde **au tout dernier
   moment**, c'est une **parade parfaite** : c'est l'attaquant qui est sonné.
-- **Esquive** : un dash rapide pendant lequel on est invincible. Coûte de la stamina.
-- **Stamina** (barre jaune) : se vide avec les esquives et les attaques lourdes, puis
-  remonte toute seule.
+- **Esquive** : un dash rapide pendant lequel on est invincible. C'est le seul moyen de
+  passer à travers l'adversaire : sinon, les corps se repoussent.
+- **Stamina** (barre jaune) : **chaque coup** (même raté) et chaque esquive en coûtent. Elle
+  ne remonte qu'après une demi-seconde sans rien dépenser. Qui vide sa jauge est
+  **épuisé** (barre orange qui clignote) : ni attaque ni esquive tant qu'elle n'est pas
+  remontée à moitié. Frapper sans arrêt se paie donc cher.
+- **Enchaînement** : les coups reçus d'affilée étourdissent de moins en moins et repoussent
+  de plus en plus loin. Impossible de bloquer quelqu'un en martelant la touche.
 - Abandonner compte comme une défaite. Si un joueur se déconnecte, le combat se met en
   **pause** : il a **30 secondes** pour revenir.
 

@@ -3,6 +3,7 @@
 //
 //  Icônes des objets (armes et armures), dessinées sur canvas.
 //  dessinerIcone(ctx, id, cx, cy, taille) : centre (cx, cy), taille en px.
+//  etendueArme(id)                        : [début, fin] de l'arme le long du manche.
 // ============================================================================
 
 import { ARMES, ARMURES, MATERIAUX } from '/shared/data.js';
@@ -13,7 +14,10 @@ import { ENCRE, forme, cercle, nuance } from './outils.js';
 const ETENDUE_ARMES = {
   poings: [-14, 14], dague: [-8, 28], glaive: [-14, 48], lance: [-30, 80], masse: [-8, 55],
   hache: [-10, 56], trident: [-30, 82], marteau: [-10, 64],
+  cestes: [-24, 26], sica: [-10, 46], spatha: [-17, 70], fleau: [-8, 66], falx: [-20, 64], bipenne: [-12, 80],
 };
+/** [début, fin] d'une arme le long de son manche, pour la cadrer (icônes, râtelier) */
+export const etendueArme = (id) => ETENDUE_ARMES[id] || [-20, 40];
 
 const PLUMET = '#b8323f';
 
@@ -24,7 +28,7 @@ function iconeArme(ctx, id) {
     for (const dx of [-12, 0, 12]) { ctx.beginPath(); ctx.moveTo(dx, -24); ctx.lineTo(dx, -8); ctx.stroke(); }
     return;
   }
-  const [min, max] = ETENDUE_ARMES[id] || [-20, 40];
+  const [min, max] = etendueArme(id);
   const longueur = max - min;
   const echelle = 128 / longueur;
   ctx.rotate(-Math.PI / 4);

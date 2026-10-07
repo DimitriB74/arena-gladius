@@ -9,6 +9,7 @@ import { terrainDe, supportSous } from '../shared/terrain.js';
 import { attributsDeBase, nouveauPersonnage } from '../shared/validation.js';
 import {
   creerMatch, etapeCombattant, etapeMatch, ENTREE_VIDE, dynamique, combattantDepuis, presentation, abandonner,
+  porteeAttaque, distanceFente,
 } from '../shared/combat.js';
 import { dureePhase } from '../shared/formulas.js';
 
@@ -225,15 +226,130 @@ test('attaque légère : touche à portée, dégâts, étourdissement et recul',
   const m = matchLance();
   const [a, b] = m.combattants;
   b.x = a.x + 80; b.dir = -1;
-  const pv0 = b.pv;
+  const pv0 = b.pv, xb0 = b.x;
   avancer(m, { legere: true }, {});
   assert.equal(a.etat, 'attaque');
   avancer(m, {}, {}, 12);
   assert.ok(b.pv < pv0, 'b a perdu des PV');
   assert.equal(b.etat, 'etourdi');
-  assert.ok(b.x > a.x + 80, 'b est repoussé');
+  assert.ok(b.x > xb0 + 5, 'b est repoussé');
   assert.ok(m.evenements.some((e) => e.type === 'coup' && e.cible === 1));
   assert.equal(a.compteurs.touches, 1);
+});
+
+test('stamina : chaque coup en coûte, même raté ; à sec, impossible de frapper', () => {
+  const c = matchLance().combattants[0];
+  const s0 = c.stamina, cout = c.stats.tr.coutLegere;
+  assert.ok(cout > 0);
+  pas(c, { legere: true });
+  assert.equal(c.etat, 'attaque');
+  assert.equal(c.stamina, s0 - cout, 'le coup a coûté de la stamina (dans le vide)');
+  // Frapper sans arrêt : la stamina ne remonte pas, et l'on finit à sec
+  let coups = 1;
+  for (let k = 0; k < 600 && c.stamina >= cout; k++) {
+    const avant = c.etat;
+    pas(c, { legere: true });
+    if (c.etat === 'attaque' && avant !== 'attaque') coups += 1;
+  }
+  assert.ok(c.stamina < cout, 'à sec');
+  assert.ok(coups <= Math.floor(s0 / cout) + 1, `${coups} coups avec ${s0} de stamina`);
+  assert.equal(c.epuise, true, 'jauge vidée : épuisé');
+  pas(c, {}, 40);   // laisser finir le dernier coup
+  pas(c, { legere: true });
+  assert.notEqual(c.etat, 'attaque', 'plus assez de stamina pour frapper');
+  // Épuisé : même avec de quoi frapper, rien tant que la jauge n'est pas remontée à moitié
+  while (c.stamina < cout * 2) pas(c, {});
+  pas(c, { legere: true });
+  assert.notEqual(c.etat, 'attaque', 'épuisé : pas de coup');
+  pas(c, { esquive: true });
+  assert.notEqual(c.etat, 'esquive', 'épuisé : pas d’esquive');
+  while (c.epuise) pas(c, {});
+  assert.ok(c.stamina >= c.stats.staminaMax * T.stamina.finEpuisement - 1);
+  pas(c, { legere: true });
+  assert.equal(c.etat, 'attaque', 'remis : on peut frapper');
+});
+
+test('enchaînement : chaque coup d’affilée étourdit moins et repousse plus loin', () => {
+  const m = matchLance();
+  const [a, b] = m.combattants;
+  const coups = [];
+  for (let k = 0; k < 3; k++) {
+    // a frappe b, toujours à la même distance, avant que l'enchaînement ne retombe
+    Object.assign(a, { etat: 'libre', attaque: null, x: 500, dir: 1, vx: 0 });
+    a.recharges.legere = 0;
+    a.stamina = a.stats.staminaMax;
+    Object.assign(b, { x: 570, y: 0, vx: 0, vy: 0, auSol: true, etat: 'libre' });
+    avancer(m, { legere: true }, {});
+    for (let n = 0; n < 30 && !m.evenements.some((e) => e.type === 'coup'); n++) avancer(m, {}, {});
+    const ev = m.evenements.find((e) => e.type === 'coup');
+    assert.ok(ev, `coup ${k + 1} porté`);
+    coups.push({ k: ev.enchainement, etourdi: b.etourdi, recul: Math.abs(b.vx) });
+    m.evenements.length = 0;
+  }
+  assert.deepEqual(coups.map((c) => c.k), [0, 1, 2]);
+  assert.ok(coups[1].etourdi < coups[0].etourdi && coups[2].etourdi < coups[1].etourdi, JSON.stringify(coups));
+  assert.ok(coups[2].recul > coups[0].recul);
+  // Après une pause, l'enchaînement repart de zéro
+  avancer(m, {}, {}, Math.ceil(T.enchainement.fenetre * T.frequence) + 30);
+  assert.equal(b.enchainement, 0);
+});
+
+test('portée : chaque arme a la sienne, et la fente rapproche', () => {
+  const dague = matchLance(perso('D', {}, { arme: { id: 'dague', niveau: 0 } })).combattants[0].stats;
+  const lance = matchLance(perso('L', {}, { arme: { id: 'lance', niveau: 0 } })).combattants[0].stats;
+  assert.ok(porteeAttaque(lance, 'legere') > porteeAttaque(dague, 'legere') + 60);
+  assert.ok(porteeAttaque(dague, 'lourde') > porteeAttaque(dague, 'legere'), 'la lourde porte plus loin');
+  // Un adversaire juste hors de portée « à l'arrêt » est quand même touché grâce à la fente
+  const m = matchLance(perso('D', {}, { arme: { id: 'dague', niveau: 0 } }));
+  const [a, b] = m.combattants;
+  b.x = a.x + porteeAttaque(a.stats, 'legere') + distanceFente(a.stats, 'legere') * 0.5;
+  avancer(m, { legere: true }, {});
+  avancer(m, {}, {}, 20);
+  assert.equal(a.compteurs.touches, 1);
+});
+
+test('armes : le fléau entame la garde plus vite, le marteau repousse plus loin', () => {
+  const effet = (arme) => {
+    const m = matchLance(perso('A', { force: 4 }, { arme: { id: arme, niveau: 0 } }));
+    const [a, b] = m.combattants;
+    b.x = a.x + 90;
+    avancer(m, {}, { p: true }, 20);   // b pare depuis longtemps (pas de parade parfaite)
+    const garde0 = b.garde;
+    avancer(m, { legere: true }, { p: true }, 30);
+    const ev = m.evenements.find((e) => e.type === 'bloque' || e.type === 'brise');
+    return { gardePerdue: (garde0 - b.garde) / ev.bloque };
+  };
+  assert.ok(effet('fleau').gardePerdue > effet('glaive').gardePerdue * 1.5);
+  const recul = (arme) => {
+    const m = matchLance(perso('A', {}, { arme: { id: arme, niveau: 0 } }));
+    const [a, b] = m.combattants;
+    b.x = a.x + 80;
+    avancer(m, { legere: true }, {});
+    for (let n = 0; n < 40 && !m.evenements.some((e) => e.type === 'coup'); n++) avancer(m, {}, {});
+    return Math.abs(b.vx);
+  };
+  assert.ok(recul('marteau') > recul('glaive') * 1.2);
+});
+
+test('attaque : on frappe du côté où l’on pousse la direction', () => {
+  const c = matchLance().combattants[0];
+  assert.equal(c.dir, 1);
+  pas(c, { g: true, legere: true });
+  assert.equal(c.etat, 'attaque');
+  assert.equal(c.dir, -1, 'demi-tour avant de frapper');
+});
+
+test('corps : on ne traverse pas l’adversaire en marchant, mais l’esquive passe', () => {
+  const m = matchLance();
+  const [a, b] = m.combattants;
+  a.x = 700; b.x = 800;
+  avancer(m, { d: true }, {}, 90);
+  assert.ok(b.x - a.x >= 40, `a pousse b sans le traverser (${a.x.toFixed(0)} / ${b.x.toFixed(0)})`);
+  a.recharges.esquive = 0;
+  a.stamina = a.stats.staminaMax;
+  avancer(m, { d: true, esquive: true }, {});
+  avancer(m, {}, {}, 15);
+  assert.ok(a.x > b.x, 'l’esquive passe au travers');
 });
 
 test('attaque hors de portée : ne touche pas', () => {

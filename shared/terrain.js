@@ -11,6 +11,7 @@
 //  trouSous(terrain, x)                  → le trou au-dessus duquel se trouve x (ou null)
 //  supportSous(terrain, x, y)            → hauteur de ce qui est sous les pieds (ou null : le vide)
 //  surGlace(terrain, x)                  → x est-il sur une zone de glace ?
+//  corpsLibre(terrain, x, y)             → un corps tiendrait-il là (murs, blocs) ?
 // ============================================================================
 
 import { TEMPS_REEL as T, ARENES } from './data.js';
@@ -86,4 +87,11 @@ export function supportSous(terrain, x, y, demi = 0) {
 /** x est-il sur une zone de glace ? */
 export function surGlace(terrain, x) {
   return terrain.glaces.some((g) => x >= g.x1 && x <= g.x2);
+}
+
+/** Un corps placé en (x, y) tiendrait-il là, entre les murs et hors des blocs ? */
+export function corpsLibre(terrain, x, y) {
+  const demi = T.corps.largeur / 2, H = T.corps.hauteur;
+  if (x - demi < terrain.murGauche - 0.01 || x + demi > terrain.murDroit + 0.01) return false;
+  return !terrain.solides.some((s) => x + demi > s.x1 + 0.01 && x - demi < s.x2 - 0.01 && y + H > s.y1 + 0.01 && y < s.y2 - 0.01);
 }

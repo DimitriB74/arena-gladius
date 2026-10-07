@@ -11,6 +11,9 @@
 //  creerMatch(persos, options)                  → état d'un combat
 //  etapeCombattant(c, entree, dt, terrain)      → mouvement, saut, esquive, attaque, parade
 //  etapeMatch(etat, entrees, dt, alea)          → un pas complet (les deux + coups + chutes)
+//  boiteFrappe(c) / porteeAttaque(stats, type)  → zone d'une attaque / écart max où elle touche
+//  distanceFente(stats, type)                   → élan pris pendant que le coup part
+//  pousseeEntreCorps(a, b, dt)                  → les deux corps se repoussent (pas de traversée)
 //  dynamique(c) / appliquerDynamique()          → ce qui change à chaque instant (réseau)
 //
 //  Une « entrée » décrit les touches d'un joueur pendant un pas :
@@ -19,8 +22,8 @@
 // ============================================================================
 
 import { TEMPS_REEL as T, ARENES, ORDRE_ARENES } from './data.js';
-import { statsCombattant, dureePhase, degatsCoup, chanceCritique } from './formulas.js';
-import { terrainDe, surGlace } from './terrain.js';
+import { statsCombattant, dureePhase, degatsCoup, chanceCritique, coutAttaque } from './formulas.js';
+import { terrainDe, surGlace, corpsLibre } from './terrain.js';
 
 export const ENTREE_VIDE = Object.freeze({ g: false, d: false, b: false, p: false, saut: false, legere: false, lourde: false, esquive: false });
 const ACTIONS_PRESSEES = ['saut', 'legere', 'lourde', 'esquive'];
@@ -63,6 +66,9 @@ export function creerCombattant(perso, index, { ia = false, x = terrainDe('colis
     delaiGarde: 0,
     descente: 0,
     tampon: null,            // { action, ttl }
+    enchainement: 0,         // coups reçus d'affilée (voir T.enchainement)
+    chronoEnchainement: 0,
+    epuise: false,           // jauge vidée : ni attaque ni esquive pour un moment
     pv: stats.pvMax,
     stamina: stats.staminaMax,
     garde: stats.tr.gardeMax,
@@ -93,20 +99,42 @@ export function creerMatch(persos, { arene = null, alea = Math.random, ia = [fal
 const approcher = (v, cible, pas) => (v < cible ? Math.min(cible, v + pas) : Math.max(cible, v - pas));
 const peutAgir = (c) => c.etat === 'libre';
 
+/**
+ * Dépense de stamina (coup, esquive). La jauge ne remonte qu'après un petit délai ;
+ * si l'on n'a même plus de quoi faire un coup léger, on est ÉPUISÉ (voir T.stamina).
+ */
+function depenser(c, cout) {
+  c.stamina -= cout;
+  if (cout > 0) c.delaiStamina = T.stamina.delaiRegen;
+  if (c.stamina < c.stats.tr.coutLegere) c.epuise = true;
+}
+
 /** Zone du corps (pour recevoir les coups) */
 export function boiteCorps(c) {
   const l = T.corps.largeur / 2;
   return { x1: c.x - l, x2: c.x + l, y1: c.y, y2: c.y + T.corps.hauteur };
 }
 
-/** Zone de frappe d'une attaque (devant le combattant) */
+/** Jusqu'où porte une attaque, depuis le centre du corps (bord du corps + portée de l'arme) */
+const avantFrappe = (stats, type) => T.corps.largeur / 2 + stats.tr.portee * T.attaques[type].allonge;
+
+/** Zone de frappe d'une attaque : du dos (un peu) jusqu'au bout de l'arme, devant */
 export function boiteFrappe(c) {
   const a = T.attaques[c.attaque.type];
-  const longueur = c.stats.tr.allonge * a.allonge;
-  const depart = 12;
-  const x1 = c.dir > 0 ? c.x + depart : c.x - depart - longueur;
-  return { x1, x2: x1 + longueur, y1: c.y + 25, y2: c.y + 140 };
+  const avant = avantFrappe(c.stats, c.attaque.type);
+  const x1 = c.dir > 0 ? c.x - T.zoneArriere : c.x - avant;
+  const x2 = c.dir > 0 ? c.x + avant : c.x + T.zoneArriere;
+  return { x1, x2, y1: c.y + a.zone[0], y2: c.y + a.zone[1] };
 }
+
+/**
+ * Écart maximal (centre à centre) auquel une attaque touche un adversaire
+ * immobile, sans compter la fente. Sert aux bots et à l'affichage des stats.
+ */
+export const porteeAttaque = (stats, type) => avantFrappe(stats, type) + T.corps.largeur / 2;
+
+/** Distance parcourue pendant la fente d'une attaque (au sol) */
+export const distanceFente = (stats, type) => T.attaques[type].fente * dureePhase(type, 'active', stats);
 
 const chevauche = (a, b) => a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
 
@@ -126,9 +154,12 @@ export function etapeCombattant(c, entree, dt, terrain = terrainDe('colisee')) {
   c.delaiStamina = Math.max(0, c.delaiStamina - dt);
   c.delaiGarde = Math.max(0, c.delaiGarde - dt);
   c.descente = Math.max(0, c.descente - dt);
+  c.chronoEnchainement = Math.max(0, (c.chronoEnchainement || 0) - dt);
+  if (c.chronoEnchainement <= 0) c.enchainement = 0;
 
   // Stamina et garde remontent avec le temps
   if (c.delaiStamina <= 0) c.stamina = Math.min(c.stats.staminaMax, c.stamina + tr.regenStamina * dt);
+  if (c.epuise && c.stamina >= c.stats.staminaMax * T.stamina.finEpuisement) c.epuise = false;
   if (!c.parade && c.delaiGarde <= 0) c.garde = Math.min(tr.gardeMax, c.garde + T.parade.regenGarde * dt);
 
   // Plus de commandes une fois KO, vainqueur, ou tombé trop bas dans un trou
@@ -170,7 +201,6 @@ export function etapeCombattant(c, entree, dt, terrain = terrainDe('colisee')) {
     if (a.phase === 'preparation' && a.t >= dureePhase(a.type, 'preparation', c.stats)) {
       a.t -= dureePhase(a.type, 'preparation', c.stats);
       a.phase = 'active';
-      if (a.type === 'lourde' && c.auSol) c.vx = c.dir * 260;   // petite fente vers l'avant
     }
     if (a.phase === 'active' && a.t >= dureePhase(a.type, 'active', c.stats)) {
       a.t -= dureePhase(a.type, 'active', c.stats);
@@ -195,21 +225,23 @@ export function etapeCombattant(c, entree, dt, terrain = terrainDe('colisee')) {
       c.sur = -1;
       fait = true;
     } else if ((action === 'legere' || action === 'lourde') && c.recharges[action] <= 0) {
-      const cout = action === 'lourde' ? tr.coutLourde : T.attaques.legere.cout;
-      if (c.stamina >= cout) {
-        c.stamina -= cout;
-        if (cout > 0) c.delaiStamina = T.stamina.delaiRegen;
+      // Chaque coup coûte de la stamina, qu'il touche ou non : impossible de frapper sans arrêt
+      const cout = coutAttaque(action, c.stats);
+      if (!c.epuise && c.stamina >= cout) {
+        // On frappe du côté où l'on pousse la direction (pas dans l'ancienne)
+        const sens = (e.d ? 1 : 0) - (e.g ? 1 : 0);
+        if (sens) c.dir = sens;
+        depenser(c, cout);
         c.etat = 'attaque';
         c.attaque = { type: action, phase: 'preparation', t: 0, aTouche: false };
         c.parade = false;
         c.compteurs.attaques += 1;
         fait = true;
       }
-    } else if (action === 'esquive' && c.recharges.esquive <= 0 && c.stamina >= T.esquive.cout) {
+    } else if (action === 'esquive' && !c.epuise && c.recharges.esquive <= 0 && c.stamina >= T.esquive.cout) {
       const sens = (e.d ? 1 : 0) - (e.g ? 1 : 0);
       if (sens) c.dir = sens;
-      c.stamina -= T.esquive.cout;
-      c.delaiStamina = T.stamina.delaiRegen;
+      depenser(c, T.esquive.cout);
       c.etat = 'esquive';
       c.esquiveT = T.esquive.duree;
       c.invincible = T.esquive.invincibilite;
@@ -231,6 +263,9 @@ export function etapeCombattant(c, entree, dt, terrain = terrainDe('colisee')) {
     const vmax = tr.vitesse * (c.parade ? T.parade.ralentissement : 1);
     if (sens) c.vx = approcher(c.vx, sens * vmax, T.physique.acceleration * controle * adherence.acceleration * dt);
     else c.vx = approcher(c.vx, 0, T.physique.freinage * (c.auSol ? adherence.freinage : 0.25) * dt);
+  } else if (c.etat === 'attaque' && c.attaque.phase === 'active' && c.auSol) {
+    // La fente : on s'élance vers l'avant pendant que le coup part
+    c.vx = c.dir * Math.max(c.vx * c.dir, T.attaques[c.attaque.type].fente);
   } else if (c.etat === 'attaque' || c.etat === 'etourdi' || !actif) {
     c.vx = approcher(c.vx, 0, T.physique.freinage * (c.auSol ? 0.9 * adherence.freinage : 0.2) * dt);
   }
@@ -360,13 +395,15 @@ function appliquerCoup(etat, att, def, type, alea) {
   const critique = !deFace && alea() * 100 < chanceCritique(att.stats);
   const degats = degatsCoup(type, att.stats, def.stats, { alea, critique });
 
+  const arme = att.stats.arme;
   if (deFace) {
-    // La garde encaisse l'essentiel ; si elle cède, garde brisée
+    // La garde encaisse l'essentiel ; si elle cède, garde brisée.
+    // Certaines armes (fléau, masse) entament la garde plus vite.
     const bloque = Math.round(degats * T.parade.reductionDegats);
     const passe = degats - bloque;
-    def.garde -= bloque;
+    def.garde -= bloque * (arme.briseGarde || 1);
     def.pv = Math.max(0, def.pv - passe);
-    def.vx = att.dir * 140;
+    def.vx = att.dir * 140 * (arme.recul || 1);
     att.compteurs.degats += passe;
     if (def.garde <= 0) {
       def.garde = 0;
@@ -380,11 +417,18 @@ function appliquerCoup(etat, att, def, type, alea) {
       noter(etat, { ...ev, type: 'bloque', degats: passe, bloque });
     }
   } else {
+    // Coups enchaînés : chaque coup de plus étourdit moins et repousse plus loin,
+    // pour que l'adversaire puisse toujours se dégager
+    const E = T.enchainement;
+    const k = def.chronoEnchainement > 0 ? def.enchainement + 1 : 0;
+    def.enchainement = k;
+    def.chronoEnchainement = E.fenetre;
     def.pv = Math.max(0, def.pv - degats);
-    def.vx = att.dir * a.recul;
+    def.vx = att.dir * a.recul * (arme.recul || 1) * (1 + E.recul * k);
     if (a.reculHaut) { def.vy = a.reculHaut; def.auSol = false; def.sur = -1; }
     def.etat = 'etourdi';
-    def.etourdi = a.etourdissement;
+    def.etourdi = Math.max(E.etourdissementMin, a.etourdissement * E.etourdissement ** k);
+    ev.enchainement = k;
     def.sonne = false;
     def.attaque = null;
     def.parade = false;
@@ -440,6 +484,28 @@ export function abandonner(etat, i, raison = 'abandon') {
 }
 
 // ----------------------------------------------------------------------------
+//  Les corps se repoussent : on ne traverse pas l'adversaire en marchant ou en
+//  frappant (sinon on se retrouve dans son dos) ; l'esquive, elle, passe au travers.
+// ----------------------------------------------------------------------------
+const ECART_CORPS = 44;          // écart minimal entre deux centres (un peu moins que la largeur)
+const VITESSE_POUSSEE = 600;     // unités par seconde : une poussée douce, pas un mur
+
+/**
+ * Déplacement à appliquer à `b` (et l'opposé à `a`) pour séparer les deux corps
+ * pendant ce pas (positif = b vers la droite). 0 s'ils ne se chevauchent pas.
+ */
+export function pousseeEntreCorps(a, b, dt) {
+  const horsJeu = (c) => c.etat === 'ko' || c.etat === 'esquive';
+  if (horsJeu(a) || horsJeu(b)) return 0;
+  if (Math.abs(a.y - b.y) > T.corps.hauteur * 0.6) return 0;
+  const dx = b.x - a.x;
+  const recouvrement = ECART_CORPS - Math.abs(dx);
+  if (recouvrement <= 0) return 0;
+  const sens = Math.sign(dx) || (a.index === 0 ? 1 : -1);
+  return sens * Math.min(recouvrement / 2, VITESSE_POUSSEE * dt);
+}
+
+// ----------------------------------------------------------------------------
 //  Un pas du match complet (serveur)
 // ----------------------------------------------------------------------------
 export function etapeMatch(etat, entrees, dt, alea = Math.random) {
@@ -458,6 +524,15 @@ export function etapeMatch(etat, entrees, dt, alea = Math.random) {
     return;
   }
   if (etat.phase !== 'combat') return;
+
+  const [a, b] = etat.combattants;
+  const poussee = pousseeEntreCorps(a, b, dt);
+  if (poussee) {
+    // Chacun recule de la moitié ; si l'un est coincé (mur, bloc), l'autre recule de tout
+    const libreA = corpsLibre(terrain, a.x - poussee, a.y), libreB = corpsLibre(terrain, b.x + poussee, b.y);
+    if (libreA) a.x -= libreB ? poussee : 2 * poussee;
+    if (libreB) b.x += libreA ? poussee : 2 * poussee;
+  }
 
   verifierChutes(etat, terrain);
   if (etat.fini) return;
@@ -489,6 +564,7 @@ export function dynamique(c) {
     etourdi: arrondir(c.etourdi, 1000), sonne: c.sonne, parade: c.parade, paradeDepuis: arrondir(c.paradeDepuis, 1000),
     delaiStamina: arrondir(c.delaiStamina, 1000), delaiGarde: arrondir(c.delaiGarde, 1000),
     descente: arrondir(c.descente, 1000), tampon: c.tampon ? { ...c.tampon } : null,
+    enchainement: c.enchainement, chronoEnchainement: arrondir(c.chronoEnchainement, 1000), epuise: c.epuise,
     pv: c.pv, stamina: arrondir(c.stamina), garde: arrondir(c.garde),
     compteurs: { ...c.compteurs },
   };
@@ -514,7 +590,8 @@ export function combattantDepuis(pres, dyn) {
     ...pres,
     x: 0, y: 0, vx: 0, vy: 0, dir: 1, auSol: true, sur: -1, sauts: T.saut.sautsMax, etat: 'libre', attaque: null,
     recharges: { legere: 0, lourde: 0, esquive: 0 }, esquiveT: 0, invincible: 0, etourdi: 0, sonne: false, parade: false,
-    paradeDepuis: 0, delaiStamina: 0, delaiGarde: 0, descente: 0, tampon: null, pv: 0, stamina: 0, garde: 0,
+    paradeDepuis: 0, delaiStamina: 0, delaiGarde: 0, descente: 0, tampon: null, enchainement: 0, chronoEnchainement: 0, epuise: false,
+    pv: 0, stamina: 0, garde: 0,
     compteurs: { degats: 0, attaques: 0, touches: 0, critiques: 0, parfaites: 0 },
   };
   appliquerDynamique(c, dyn);

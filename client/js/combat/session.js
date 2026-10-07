@@ -14,9 +14,9 @@
 
 import { TEMPS_REEL as T } from '/shared/data.js';
 import {
-  etapeCombattant, combattantDepuis, appliquerDynamique, ENTREE_VIDE,
+  etapeCombattant, combattantDepuis, appliquerDynamique, ENTREE_VIDE, pousseeEntreCorps,
 } from '/shared/combat.js';
-import { terrainDe } from '/shared/terrain.js';
+import { terrainDe, corpsLibre } from '/shared/terrain.js';
 
 const DT = 1 / T.frequence;
 const TOUCHES = ['g', 'd', 'b', 'p', 'saut', 'legere', 'lourde', 'esquive'];
@@ -55,7 +55,7 @@ export class SessionCombat {
     appliquerDynamique(this.moi, etat.c[this.monIndex]);
     this.enAttente = this.enAttente.filter((e) => e.s > etat.ack);
     const enCombat = etat.phase === 'combat' && !etat.pause;
-    for (const e of this.enAttente) etapeCombattant(this.moi, enCombat ? e : ENTREE_VIDE, DT, this.terrain);
+    for (const e of this.enAttente) this.pas(enCombat ? e : ENTREE_VIDE, enCombat);
 
     // Petit écart : on le lisse à l'affichage ; grand écart : on se recale d'un coup
     const ex = avant.x - this.moi.x, ey = avant.y - this.moi.y;
@@ -86,7 +86,7 @@ export class SessionCombat {
         for (const k of TOUCHES) if (e[k]) envoi[k] = 1;
         lot.push(envoi);
       }
-      etapeCombattant(this.moi, enCombat ? e : ENTREE_VIDE, DT, this.terrain);
+      this.pas(enCombat ? e : ENTREE_VIDE, enCombat);
     }
     // Garde-fou : si le serveur ne répond plus, on ne garde pas des milliers de touches
     if (this.enAttente.length > 240) this.enAttente.splice(0, this.enAttente.length - 240);
@@ -95,6 +95,22 @@ export class SessionCombat {
     this.correction.x *= f;
     this.correction.y *= f;
     return lot;
+  }
+
+  /**
+   * Un pas de ta prédiction : les mêmes règles que le serveur, plus la poussée
+   * entre les corps (calculée avec la dernière position connue de l'adversaire :
+   * le serveur, lui, la connaît exactement ; le petit écart est rattrapé en douceur)
+   */
+  pas(entree, enCombat) {
+    etapeCombattant(this.moi, entree, DT, this.terrain);
+    if (!enCombat) return;
+    const autre = this.adversaireActuel();
+    const [a, b] = this.monIndex === 0 ? [this.moi, autre] : [autre, this.moi];
+    const poussee = pousseeEntreCorps(a, b, DT);
+    if (!poussee) return;
+    const x = this.moi.x + (this.monIndex === 0 ? -poussee : poussee);
+    if (corpsLibre(this.terrain, x, this.moi.y)) this.moi.x = x;
   }
 
   /** Ton gladiateur tel qu'il doit être dessiné */

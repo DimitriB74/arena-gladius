@@ -18,16 +18,17 @@ import {
   totalPointsAttributs, valeurEquipement, coutAmelioration, dureePhase,
 } from '../shared/formulas.js';
 import { terrainDe, trouSous, supportSous, surGlace } from '../shared/terrain.js';
+import { porteeAttaque, distanceFente } from '../shared/combat.js';
 
 const auHasard = (liste, alea) => liste[Math.floor(alea() * liste.length)];
 const reglages = (difficulte) => DIFFICULTES[difficulte] || DIFFICULTES.normal;
 
 // Styles de combat : poids de chaque attribut et armes préférées
 const STYLES = {
-  brute:     { poids: { force: 4, vitalite: 3, defense: 1, endurance: 1.5, agilite: 1, vitesse: 0.5 }, armes: ['marteau', 'hache', 'masse', 'glaive'] },
-  agile:     { poids: { agilite: 4, vitesse: 3, force: 2, endurance: 1, vitalite: 1, defense: 0.5 }, armes: ['trident', 'lance', 'glaive', 'dague'] },
-  tank:      { poids: { defense: 3, vitalite: 4, endurance: 2, force: 2, agilite: 0.5, vitesse: 0.5 }, armes: ['masse', 'glaive', 'hache', 'dague'] },
-  equilibre: { poids: { force: 2, agilite: 2, defense: 2, vitalite: 2, endurance: 1.5, vitesse: 1.5 }, armes: ['glaive', 'trident', 'masse', 'lance'] },
+  brute:     { poids: { force: 4, vitalite: 3, defense: 1, endurance: 1.5, agilite: 1, vitesse: 0.5 }, armes: ['bipenne', 'marteau', 'fleau', 'hache', 'masse', 'glaive'] },
+  agile:     { poids: { agilite: 4, vitesse: 3, force: 2, endurance: 1, vitalite: 1, defense: 0.5 }, armes: ['falx', 'trident', 'sica', 'lance', 'cestes', 'dague'] },
+  tank:      { poids: { defense: 3, vitalite: 4, endurance: 2, force: 2, agilite: 0.5, vitesse: 0.5 }, armes: ['fleau', 'masse', 'spatha', 'hache', 'glaive', 'dague'] },
+  equilibre: { poids: { force: 2, agilite: 2, defense: 2, vitalite: 2, endurance: 1.5, vitesse: 1.5 }, armes: ['falx', 'spatha', 'trident', 'glaive', 'lance', 'dague'] },
 };
 
 function tirerPondere(poids, alea) {
@@ -124,13 +125,13 @@ export function genererAdversaire(perso, alea = Math.random, difficulte = 'norma
 //  Il connaît le terrain : il saute les obstacles et les trous, freine avant
 //  le vide, remonte s'il y tombe, et cherche à y pousser son adversaire.
 // ----------------------------------------------------------------------------
-const MARGE_PORTEE = 40;   // la zone de frappe part un peu devant le corps
+const MARGE_PORTEE = 8;    // le bot frappe un peu avant la limite, pour ne pas viser dans le vide
 const DEMI = T.corps.largeur / 2;
 const MARGE_BORD = 12;     // le bot veut au moins 12 unités de pied sur le bord
 
-/** Distance à partir de laquelle une attaque de `c` peut toucher */
+/** Écart (centre à centre) en dessous duquel une attaque de `c` peut toucher, fente comprise */
 function portee(c, type = 'legere') {
-  return c.stats.tr.allonge * T.attaques[type].allonge + MARGE_PORTEE;
+  return porteeAttaque(c.stats, type) + distanceFente(c.stats, type) * 0.6 - MARGE_PORTEE;
 }
 
 /** Y a-t-il (vraiment) quelque chose sous les pieds en x (à la hauteur y), ou le vide ? */
@@ -180,7 +181,7 @@ function survivre(terrain, moi, e) {
   e.p = false;
   if (moi.vy < -50 && moi.y < 60 && moi.sauts > 0) e.saut = true;
   else if (moi.sauts === 0 && moi.vy < 0 && moi.y > -5 && moi.recharges.esquive <= 0
-    && moi.stamina >= T.esquive.cout && Math.abs((sens > 0 ? bordD : bordG) - moi.x) < 170) e.esquive = true;
+    && !moi.epuise && moi.stamina >= T.esquive.cout && Math.abs((sens > 0 ? bordD : bordG) - moi.x) < 170) e.esquive = true;
   return true;
 }
 
@@ -243,7 +244,7 @@ export function creerCerveau(difficulte = 'normal', alea = Math.random) {
     vueDepuis: 0,
     reponse: null,          // 'parade' | 'parfaite' | 'esquive' | 'rien'
     prochaineDecision: 0,
-    envie: 'approcher',     // approcher | attendre | reculer
+    envie: 'approcher',     // approcher | attendre | reculer | garder
   };
 }
 
@@ -287,7 +288,7 @@ export function entreeBot(cerveau, etat, i, dt) {
   if (cerveau.attaqueVue && cerveau.vueDepuis >= d.reaction && aPorteeDeLui && !cerveau.reponse) {
     const lourde = cerveau.attaqueVue.type === 'lourde';
     const r = alea();
-    if (lourde && r < d.esquive && moi.stamina >= T.esquive.cout && moi.recharges.esquive <= 0) cerveau.reponse = 'esquive';
+    if (lourde && r < d.esquive && !moi.epuise && moi.stamina >= T.esquive.cout && moi.recharges.esquive <= 0) cerveau.reponse = 'esquive';
     else if (alea() < d.parade) cerveau.reponse = alea() < d.paradeParfaite ? 'parfaite' : 'parade';
     else cerveau.reponse = 'rien';
   }
@@ -350,31 +351,75 @@ export function entreeBot(cerveau, etat, i, dt) {
       return e;
     }
     const fatigue = moi.stamina < moi.stats.staminaMax * 0.25;
-    cerveau.envie = fatigue && adx < 300 ? 'reculer' : alea() < d.agressivite ? 'approcher' : 'attendre';
+    // L'adversaire est à portée et prêt à frapper : un coup léger part trop vite pour
+    // qu'on le voie venir, alors on lève la garde AVANT (plus souvent en Difficile)
+    const menace = (lui.etat === 'libre' || lui.etat === 'attaque') && adx <= portee(lui, 'legere') + 30
+      && Math.abs(dy) < 100 && !lui.epuise && lui.stamina >= lui.stats.tr.coutLegere;
+    const gardeSolide = moi.garde > moi.stats.tr.gardeMax * 0.35;
+    if (lui.parade && adx < 400) cerveau.envie = 'approcher';   // il se cache derrière sa garde : on le presse
+    else if (menace && gardeSolide && alea() < d.parade * 0.7) {
+      // Une garde se tient un moment, sinon elle ne sert à rien
+      cerveau.envie = 'garder';
+      cerveau.prochaineDecision = 0.35 + alea() * 0.45;
+    }
+    else if (lui.epuise) cerveau.envie = 'approcher';   // il est épuisé : on fonce
+    else cerveau.envie = fatigue && adx < 300 ? 'reculer' : alea() < d.agressivite ? 'approcher' : 'attendre';
   }
 
   // --- 4. Attaquer si c'est possible ----------------------------------------
   const memeHauteur = Math.abs(dy) < 90;
-  const vulnerable = lui.etat === 'etourdi' || (lui.etat === 'attaque' && lui.attaque.phase === 'recuperation');
-  const peutLourde = moi.recharges.lourde <= 0 && moi.stamina >= moi.stats.tr.coutLourde;
+  // Ouvertures : sonné, en fin de coup (raté ou paré), ou trop fatigué pour frapper
+  const epuise = lui.epuise || lui.stamina < lui.stats.tr.coutLegere;
+  const vulnerable = lui.etat === 'etourdi' || (lui.etat === 'attaque' && lui.attaque.phase === 'recuperation') || epuise;
+  // Chaque coup coûte de la stamina : le bot garde une réserve pour esquiver (selon la difficulté)
+  // Hors Facile, il ne se met jamais lui-même en état d'épuisement
+  const garderDeQuoi = d.reserveStamina > 0 ? moi.stats.tr.coutLegere : 0;
+  const peutLourde = !moi.epuise && moi.recharges.lourde <= 0
+    && moi.stamina >= moi.stats.tr.coutLourde + garderDeQuoi + d.reserveStamina * 0.5;
+  const peutLegere = !moi.epuise && moi.recharges.legere <= 0
+    && moi.stamina >= moi.stats.tr.coutLegere + garderDeQuoi + d.reserveStamina;
+  // La fente fait avancer, puis glisser (sur la glace, plus de 200 unités après une lourde !) :
+  // aucun point du trajet ne doit passer au-dessus du vide. Seule exception : si l'on part
+  // d'un bord à peine tenu, le début du trajet compte pour rien tant qu'on va vers le sol.
+  const glissade = (type) => {
+    const f = T.attaques[type].fente;
+    const adherence = moi.sur < 0 && surGlace(terrain, moi.x) ? T.physique.glace.freinage : 1;
+    return distanceFente(moi.stats, type) + (f * f) / (2 * T.physique.freinage * 0.9 * adherence) + 10;
+  };
+  const fenteSure = (type) => {
+    if (!moi.auSol) return false;
+    const fin = glissade(type);
+    let surLeSol = !vide(terrain, moi.x, moi.y);
+    for (let dist = 8; dist <= fin; dist += 8) {
+      const auVide = vide(terrain, moi.x + versLui * dist, moi.y);
+      if (auVide && surLeSol) return false;
+      if (!auVide) surLeSol = true;
+    }
+    return surLeSol;
+  };
   // Pas d'attaque en l'air près du vide : on ne pourrait plus se diriger en retombant
   const enLAirPresDuVide = !moi.auSol
     && (vide(terrain, moi.x, moi.y) || distanceDuVide(terrain, moi, Math.sign(moi.vx) || moi.dir, 120) < Infinity);
   if (moi.etat === 'libre' && memeHauteur && !enLAirPresDuVide) {
     // L'adversaire a le vide dans le dos : une attaque lourde peut l'y envoyer
     const videDerriere = distanceDuVide(terrain, lui, versLui, 200) < Infinity;
-    // La fente de l'attaque lourde fait glisser (surtout sur la glace) : pas vers le vide
-    const glissade = moi.sur < 0 && surGlace(terrain, moi.x) ? 110 : 25;
-    const fenteSure = moi.auSol && distanceDuVide(terrain, moi, versLui, glissade) === Infinity;
-    const aPorteeLourde = adx <= portee(moi, 'lourde') && peutLourde && fenteSure;
-    const aPorteeLegere = adx <= portee(moi, 'legere') && moi.recharges.legere <= 0;
-    const envieLourde = vulnerable ? d.lourde * 3 : d.lourde * (videDerriere ? 0.5 : 0.08);
+    const aPorteeLourde = adx <= portee(moi, 'lourde') && peutLourde && fenteSure('lourde');
+    const aPorteeLegere = adx <= portee(moi, 'legere') && peutLegere && (!moi.auSol || fenteSure('legere'));
+    // En garde, il ne frappe que sur une ouverture (contre-attaque). Face à une garde
+    // levée, l'attaque lourde est le bon outil : elle vide la garde bien plus vite.
+    const garde = cerveau.envie === 'garder' && !vulnerable;
+    const casseGarde = lui.parade && !vulnerable;
+    let envieLourde = d.lourde * (videDerriere ? 0.5 : 0.08);
+    if (casseGarde) envieLourde = d.lourde * 0.4;
+    if (vulnerable) envieLourde = d.lourde * 3;
+    if (garde) envieLourde = 0;
     if (aPorteeLourde && alea() < envieLourde) {
       if (moi.dir !== versLui) { relacher(); if (versLui > 0) e.d = true; else e.g = true; }
       e.lourde = true;
       return e;
     }
-    if (aPorteeLegere && (vulnerable || alea() < d.agressivite * 0.25)) {
+    const envieLegere = d.agressivite * 0.12 * (casseGarde ? 0.3 : 1);
+    if (aPorteeLegere && (vulnerable || (!garde && alea() < envieLegere))) {
       if (moi.dir !== versLui) { relacher(); if (versLui > 0) e.d = true; else e.g = true; }
       e.legere = true;
       return e;
@@ -384,7 +429,24 @@ export function entreeBot(cerveau, etat, i, dt) {
   // --- 5. Se déplacer ------------------------------------------------------
   relacher();
   const loin = adx > portee(moi, 'legere') - 10;
-  if (cerveau.envie === 'reculer') {
+  if (cerveau.envie === 'garder' && (lui.parade || adx > portee(lui, 'legere') + 80)) {
+    // Plus de menace (il garde lui aussi, ou s'est éloigné) : on baisse la garde
+    cerveau.envie = 'approcher';
+    cerveau.prochaineDecision = 0;
+  }
+  if (cerveau.envie === 'garder' && moi.etat === 'libre') {
+    // Garde levée, face à l'adversaire, en attendant son coup pour le contrer
+    e.p = true;
+    if (moi.dir !== versLui) { if (versLui > 0) e.d = true; else e.g = true; }
+    cerveau.tenues = { g: e.g, d: e.d, b: false, p: true };
+    return e;
+  }
+  const coince = moi.auSol && adx < portee(moi, 'legere') + 20 && !fenteSure('legere') && !fenteSure('lourde');
+  if (moi.auSol && vide(terrain, moi.x, moi.y)) {
+    // Debout sur un bord, à peine : revenir sur la terre ferme
+    if (!vide(terrain, moi.x + 24, moi.y)) e.d = true; else e.g = true;
+  } else if (cerveau.envie === 'reculer' || coince) {
+    // Frapper l'enverrait dans le vide : on recule pour se donner de la place
     if (versLui > 0) e.g = true; else e.d = true;
   } else if (cerveau.envie === 'approcher' && loin) {
     if (versLui > 0) e.d = true; else e.g = true;

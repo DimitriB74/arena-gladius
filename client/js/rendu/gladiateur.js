@@ -87,6 +87,65 @@ export function dessinerArme(ctx, idArme) {
       forme(ctx, '#8d949c', () => ctx.roundRect(42, -20, 22, 40, 4));
       forme(ctx, '#b9c0c7', () => ctx.rect(46, -16, 5, 32), 2);
       break;
+    case 'cestes':
+      // Gantelet de cuir clouté autour du poing
+      forme(ctx, '#6b3d1a', () => ctx.roundRect(-9, -9, 21, 18, 6));
+      forme(ctx, '#8a5a32', () => ctx.rect(-9, -3, 21, 6), 2);
+      for (const dy of [-6, 0, 6]) cercle(ctx, 11, dy, 2.6, ombre, 1.5);
+      break;
+    case 'sica':
+      // Lame courbe des Thraces
+      forme(ctx, manche, () => ctx.rect(-8, -3.5, 13, 7));
+      forme(ctx, '#c9a042', () => ctx.rect(4, -7, 4, 14));
+      forme(ctx, metal, () => {
+        ctx.moveTo(8, -4); ctx.quadraticCurveTo(28, -8, 46, -18);
+        ctx.lineTo(44, -11); ctx.quadraticCurveTo(28, -1, 8, 4); ctx.closePath();
+      });
+      break;
+    case 'spatha':
+      // Épée longue : comme le glaive, en plus long
+      forme(ctx, manche, () => ctx.rect(-10, -3.5, 15, 7));
+      cercle(ctx, -12, 0, 4.5, '#c9a042', 2.5);
+      forme(ctx, '#c9a042', () => ctx.rect(4, -10, 5, 20));
+      forme(ctx, metal, () => {
+        ctx.moveTo(9, -4.5); ctx.lineTo(62, -4.5); ctx.lineTo(70, 0); ctx.lineTo(62, 4.5); ctx.lineTo(9, 4.5); ctx.closePath();
+      });
+      ctx.strokeStyle = ombre; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(11, 0); ctx.lineTo(62, 0); ctx.stroke();
+      break;
+    case 'fleau':
+      // Manche, chaîne et boule cloutée qui pend
+      forme(ctx, manche, () => ctx.rect(-8, -3.5, 32, 7));
+      for (const [cx, cy] of [[27, 2], [33, 6], [39, 10]]) cercle(ctx, cx, cy, 3, ombre, 1.5);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        forme(ctx, ombre, () => {
+          ctx.moveTo(50 + Math.cos(a - 0.3) * 8, 17 + Math.sin(a - 0.3) * 8);
+          ctx.lineTo(50 + Math.cos(a) * 15, 17 + Math.sin(a) * 15);
+          ctx.lineTo(50 + Math.cos(a + 0.3) * 8, 17 + Math.sin(a + 0.3) * 8);
+        }, 2);
+      }
+      cercle(ctx, 50, 17, 10, '#8d949c');
+      break;
+    case 'falx':
+      // Long manche et lame recourbée vers l'avant (comme une faucille)
+      forme(ctx, manche, () => ctx.rect(-20, -3, 50, 6));
+      forme(ctx, metal, () => {
+        ctx.moveTo(28, -4); ctx.quadraticCurveTo(54, -10, 64, 10);
+        ctx.lineTo(57, 13); ctx.quadraticCurveTo(48, 0, 28, 4); ctx.closePath();
+      });
+      break;
+    case 'bipenne':
+      // Hache à double tranchant (deux fers en papillon)
+      forme(ctx, manche, () => ctx.rect(-12, -4, 92, 8));
+      forme(ctx, metal, () => {
+        ctx.moveTo(52, -5); ctx.quadraticCurveTo(60, -28, 74, -30); ctx.quadraticCurveTo(66, 0, 74, 30);
+        ctx.quadraticCurveTo(60, 28, 52, 5); ctx.quadraticCurveTo(44, 28, 30, 30); ctx.quadraticCurveTo(38, 0, 30, -30);
+        ctx.quadraticCurveTo(44, -28, 52, -5); ctx.closePath();
+      });
+      ctx.strokeStyle = ombre; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(70, -22); ctx.quadraticCurveTo(64, 0, 70, 22); ctx.moveTo(34, -22); ctx.quadraticCurveTo(40, 0, 34, 22); ctx.stroke();
+      break;
     default: // poings : rien
       break;
   }

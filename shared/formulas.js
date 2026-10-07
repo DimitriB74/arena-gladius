@@ -75,9 +75,12 @@ export function statsArme(objet) {
     niveau,
     degats: arrondi1(base.degats * multAmelioration(niveau)),
     cadence: base.cadence,
-    allonge: base.allonge,
+    portee: base.portee,
     ignoreArmure: base.ignoreArmure,
     coutStamina: base.coutStamina,
+    bonusCritique: base.bonusCritique,
+    briseGarde: base.briseGarde,
+    recul: base.recul,
   };
 }
 
@@ -155,7 +158,7 @@ export function statsCombattant(perso) {
  * Endurance → stamina qui remonte ; Défense + bouclier → garde.
  */
 export function statsTempsReel(s) {
-  const { deplacement, saut, cadence, stamina, parade, attaques, allonges } = TEMPS_REEL;
+  const { deplacement, saut, cadence, stamina, parade, attaques } = TEMPS_REEL;
   const a = s.attributs;
   const multCourse = Math.min(deplacement.multMax, 1 + a.vitesse * deplacement.parPointVitesse);
   const multSaut = Math.min(saut.multMax, 1 + a.vitesse * saut.parPointVitesse);
@@ -167,21 +170,26 @@ export function statsTempsReel(s) {
     vitesse: Math.round(deplacement.vitesseBase * multCourse),
     impulsionSaut: Math.round(saut.impulsionBase * multSaut),
     cadence: arrondi1(multCadence * 100) / 100,
-    allonge: allonges[s.arme.allonge] || allonges[1],
+    portee: s.arme.portee,
     regenStamina: arrondi1(stamina.regenBase + a.endurance * stamina.regenParEndurance),
     gardeMax: Math.round(parade.gardeBase + s.bouclierMax * parade.gardeParBouclier),
+    coutLegere: Math.max(1, Math.round(attaques.legere.cout * s.arme.coutStamina)),
     coutLourde: Math.round(attaques.lourde.cout * s.arme.coutStamina),
   };
 }
+
+/** Coût en stamina d'une attaque ('legere' | 'lourde') */
+export const coutAttaque = (type, att) => (type === 'lourde' ? att.tr.coutLourde : att.tr.coutLegere);
 
 /** Durée (s) d'une phase d'attaque, raccourcie par la cadence */
 export function dureePhase(typeAttaque, phase, att) {
   return TEMPS_REEL.attaques[typeAttaque][phase] / att.tr.cadence;
 }
 
-/** Chance de coup critique (en %) */
+/** Chance de coup critique (en %) : Agilité + bonus de l'arme */
 export function chanceCritique(att) {
-  return arrondi1(Math.min(STATS.critiqueMax, STATS.critiqueBase + att.attributs.agilite * STATS.critiqueParAgilite));
+  const bonus = att.arme?.bonusCritique || 0;
+  return arrondi1(Math.min(STATS.critiqueMax, STATS.critiqueBase + att.attributs.agilite * STATS.critiqueParAgilite + bonus));
 }
 
 /** (B) Réduction des dégâts due à l'armure, en fraction (0 à 0,75) */

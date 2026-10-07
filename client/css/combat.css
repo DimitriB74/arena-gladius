@@ -163,6 +163,9 @@
 }
 .barre.pv i { background: linear-gradient(#ff7a6a, #c3261e); }
 .barre.stamina i { background: linear-gradient(#ffe27a, #d99a12); }
+/* Épuisé : la jauge vire à l'orange et clignote tant qu'elle n'est pas remontée */
+.barre.stamina.epuise i { background: linear-gradient(#ffb27a, #d9541a); animation: clignote 0.5s infinite alternate; }
+@keyframes clignote { to { opacity: 0.45; } }
 .barre.garde i { background: linear-gradient(#9fd6ff, #2f7fc4); }
 .barre.garde { height: 13px; }
 .barre.garde span { font-size: 10px; line-height: 9px; }

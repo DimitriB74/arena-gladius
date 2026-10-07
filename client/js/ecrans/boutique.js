@@ -79,9 +79,9 @@ function jouerAnimation() {
 function statsObjet(id, niveau = 0) {
   if (ARMES[id]) {
     const s = statsArme({ id, niveau });
-    const allonge = s.allonge >= 2 ? 'longue portée' : 'courte portée';
     const vitesse = s.cadence ? ` · ⏱ ${s.cadence > 0 ? '+' : ''}${s.cadence} % de vitesse` : '';
-    return { valeur: s.degats, texte: `⚔ ${s.degats} dégâts${vitesse} · ↔ ${allonge}` };
+    const fatigue = s.coutStamina !== 1 ? ` · ⚡ ${s.coutStamina < 1 ? 'peu fatigante' : 'fatigante'}` : '';
+    return { valeur: s.degats, texte: `⚔ ${s.degats} dégâts${vitesse} · ↔ portée ${s.portee}${fatigue}` };
   }
   const a = ARMURES[id];
   const v = valeurArmure({ id, niveau });

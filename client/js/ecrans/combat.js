@@ -78,7 +78,8 @@ function majFiches() {
     const fiche = $(`#fiche-${i}`);
     if (!fiche.firstElementChild) return;
     majBarre(fiche.querySelector('.pv'), c.pv, c.stats.pvMax, '❤');
-    majBarre(fiche.querySelector('.stamina'), c.stamina, c.stats.staminaMax, '⚡');
+    majBarre(fiche.querySelector('.stamina'), c.stamina, c.stats.staminaMax, c.epuise ? '😮‍💨 Épuisé' : '⚡');
+    fiche.querySelector('.stamina').classList.toggle('epuise', !!c.epuise);
     majBarre(fiche.querySelector('.garde'), c.garde, c.stats.tr.gardeMax, '🛡');
     fiche.classList.toggle('critique', c.pv > 0 && c.pv < c.stats.pvMax * 0.25);
     fiche.classList.toggle('sonne', c.etat === 'etourdi' && c.sonne);
@@ -101,16 +102,16 @@ function construireCommandes() {
 function majRecharges() {
   const c = session.moi;
   const infos = {
-    legere: { reste: c.recharges.legere, total: 0.2, cout: 0 },
+    legere: { reste: c.recharges.legere, total: T.attaques.legere.recharge / c.stats.tr.cadence, cout: c.stats.tr.coutLegere },
     lourde: { reste: c.recharges.lourde, total: T.attaques.lourde.recharge / c.stats.tr.cadence, cout: c.stats.tr.coutLourde },
     esquive: { reste: c.recharges.esquive, total: T.esquive.recharge, cout: T.esquive.cout },
   };
   for (const [id, v] of Object.entries(infos)) {
     const el = document.querySelector(`[data-recharge="${id}"]`);
     if (!el) continue;
-    const pret = v.reste <= 0 && c.stamina >= v.cout;
-    el.classList.toggle('pret', pret);
-    el.classList.toggle('fatigue', v.reste <= 0 && c.stamina < v.cout);
+    const fatigue = c.epuise || c.stamina < v.cout;
+    el.classList.toggle('pret', v.reste <= 0 && !fatigue);
+    el.classList.toggle('fatigue', v.reste <= 0 && fatigue);
     el.querySelector('i').style.height = `${v.reste > 0 ? Math.min(1, v.reste / Math.max(0.01, v.total)) * 100 : 0}%`;
   }
 }
@@ -177,6 +178,7 @@ function traiterEvenements(evenements) {
         const lourde = ev.attaque === 'lourde';
         texte(`-${ev.degats}`, ev.x, ev.y + 40, ev.critique ? '#ffcf3a' : ev.cible === moi ? '#ff5a4a' : '#ffffff', ev.critique ? 44 : lourde ? 38 : 30);
         if (ev.critique) texte('CRITIQUE !', ev.x, ev.y + 85, '#ffcf3a', 24);
+        else if (ev.enchainement >= 1) texte(`Enchaînement ×${ev.enchainement + 1}`, ev.x, ev.y + 85, '#ffe7a8', 20);
         vis.impacts.push({ x: ev.x, y: ev.y, couleur: ev.critique ? '#ffcf3a' : '#fff4d6', debut: performance.now() });
         vis.secousse = { amplitude: (lourde ? 12 : 5) + (ev.critique ? 6 : 0), debut: performance.now() };
         jouerSon(ev.critique ? 'critique' : 'coup');
@@ -224,8 +226,9 @@ function sonsLocaux(c) {
     if (c.etat === 'esquive' && moiAvant.etat !== 'esquive') jouerSon('rate');
     if (c.sauts < moiAvant.sauts && !c.auSol) jouerSon('pas');
     if (c.auSol && !moiAvant.auSol) jouerSon('pas');
+    if (c.epuise && !moiAvant.epuise) texte('Épuisé !', c.x, c.y + 175, '#ff9a3a', 26);
   }
-  moiAvant = { etat: c.etat, sauts: c.sauts, auSol: c.auSol };
+  moiAvant = { etat: c.etat, sauts: c.sauts, auSol: c.auSol, epuise: c.epuise };
 }
 
 // ----------------------------------------------------------------------------

@@ -9,7 +9,7 @@
 import { ARMES, ORDRE_EMPLACEMENTS, ORDRE_MATERIAUX } from '/shared/data.js';
 import { ENCRE, forme, cercle, rectangle, bulle, graine } from './outils.js';
 import { dessinerGladiateur, dessinerArme } from './gladiateur.js';
-import { dessinerIcone } from './icones.js';
+import { dessinerIcone, etendueArme } from './icones.js';
 
 const L = 1000, H = 900;
 
@@ -27,9 +27,11 @@ export const MARCHANDS = {
 };
 
 // Position des objets exposés au mur (pour les mettre en valeur au survol)
+// Râtelier de la forge : les armes sur deux rangées (centre de chaque emplacement)
 const ARMES_EXPOSEES = Object.keys(ARMES).filter((id) => id !== 'poings');
+const ARMES_PAR_RANGEE = Math.ceil(ARMES_EXPOSEES.length / 2);
 function positionArmeMur(i) {
-  return [360 + i * 88, 290];
+  return [360 + (i % ARMES_PAR_RANGEE) * 88, 225 + Math.floor(i / ARMES_PAR_RANGEE) * 140];
 }
 function positionArmureMur(emplacement, materiau) {
   const col = ORDRE_MATERIAUX.indexOf(materiau);
@@ -92,22 +94,27 @@ function interieurForge(ctx, t, xmin, xmax, survolId) {
   forme(ctx, '#6b3d1a', () => { ctx.moveTo(235, 640); ctx.lineTo(300, 610); ctx.lineTo(300, 680); ctx.closePath(); }, 3);
 
   // Râtelier d'armes au mur
-  rectangle(ctx, 310, 150, ARMES_EXPOSEES.length * 88 + 20, 290, '#6b4526', 4, 6);
-  rectangle(ctx, 322, 162, ARMES_EXPOSEES.length * 88 - 4, 266, '#8a5a32', 2, 4);
+  rectangle(ctx, 310, 150, ARMES_PAR_RANGEE * 88 + 20, 290, '#6b4526', 4, 6);
+  rectangle(ctx, 322, 162, ARMES_PAR_RANGEE * 88 - 4, 266, '#8a5a32', 2, 4);
+  // Planche qui sépare les deux rangées
+  rectangle(ctx, 316, 292, ARMES_PAR_RANGEE * 88 + 8, 8, '#6b4526', 2);
   ARMES_EXPOSEES.forEach((id, i) => {
     const [x, y] = positionArmeMur(i);
     if (survolId === id) {
-      const g = ctx.createRadialGradient(x, y, 10, x, y, 90);
+      const g = ctx.createRadialGradient(x, y, 8, x, y, 70);
       g.addColorStop(0, 'rgba(255,220,110,0.85)');
       g.addColorStop(1, 'rgba(255,220,110,0)');
-      ctx.fillStyle = g; ctx.fillRect(x - 90, y - 150, 180, 300);
+      ctx.fillStyle = g; ctx.fillRect(x - 44, y - 70, 88, 140);
     }
-    cercle(ctx, x, 180, 6, '#c9a042', 2.5);  // cheville
+    cercle(ctx, x, y - 52, 5, '#c9a042', 2.5);  // cheville
     ctx.save();
-    ctx.translate(x, 400);
+    ctx.translate(x, y + 58);
     ctx.rotate(-Math.PI / 2);
-    const longueur = { lance: 0.8, trident: 0.8 }[id] || 1.1;
-    ctx.scale(longueur * 2, longueur * 2);
+    // Toutes les armes tiennent dans la hauteur d'une rangée (environ 110 px)
+    const [min, max] = etendueArme(id);
+    const k = Math.min(1.6, 112 / (max - min));
+    ctx.scale(k, k);
+    ctx.translate(-min, 0);
     dessinerArme(ctx, id);
     ctx.restore();
   });
